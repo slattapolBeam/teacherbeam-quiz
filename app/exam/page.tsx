@@ -1,0 +1,454 @@
+'use client'
+
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
+import { createClient } from '@/lib/supabase/client'
+import { allExamsDatabase } from '@/data/examDatabase'
+import type { ActiveExamSession } from '@/types/exam'
+
+export default function ExamPage() {
+  const router = useRouter()
+  const supabase = createClient()
+
+  const [session, setSession] = useState<ActiveExamSession | null>(null)
+  const [currentExamSet, setCurrentExamSet] = useState<any>(null)
+  const [currentSetName, setCurrentSetName] = useState('')
+  const [timeLeft, setTimeLeft] = useState(15 * 60)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [superTokens, setSuperTokens] = useState(0)
+  const [hintsUsed, setHintsUsed] = useState(0)
+
+  // Modal states
+  const [showGachaModal, setShowGachaModal] = useState(false)
+  const [gachaAmount, setGachaAmount] = useState(1)
+  const [showSuccessModal, setShowSuccessModal] = useState(false)
+  const [finalScore, setFinalScore] = useState(0)
+
+  // Refs for exam inputs (ต้องใช้ DOM จริง ๆ เพราะ codeTemplate เป็น HTML string)
+  const codeContainerRef = useRef<HTMLDivElement>(null)
+  const timerRef = useRef<NodeJS.Timeout | null>(null)
+  const sessionRef = useRef<ActiveExamSession | null>(null)
+
+  // ── Init ────────────────────────────────────────────────
+  useEffect(() => {
+    const sessionStr = sessionStorage.getItem('activeExamSession')
+    if (!sessionStr) { router.push('/'); return }
+
+    const activeSession: ActiveExamSession = JSON.parse(sessionStr)
+    sessionRef.current = activeSession
+    setSession(activeSession)
+    setSuperTokens(activeSession.super_tokens || 0)
+
+    let tokenChannel: ReturnType<typeof supabase.channel> | null = null
+    let gachaChannel: ReturnType<typeof supabase.channel> | null = null
+
+    if (activeSession.mode === 'review') {
+      setupReviewMode(activeSession)
+    } else {
+      setupExam(activeSession)
+      startTimer()
+      tokenChannel = listenForSuperTokens(activeSession)
+      gachaChannel = listenForGachaDrops(activeSession)
+    }
+
+    // Anti-cheat: detect tab switch
+    const handleVisibility = () => {
+      if (document.hidden && sessionRef.current?.mode !== 'review') {
+        console.warn('Tab switch detected')
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility)
+      if (timerRef.current) clearInterval(timerRef.current)
+      if (tokenChannel) supabase.removeChannel(tokenChannel)
+      if (gachaChannel) supabase.removeChannel(gachaChannel)
+    }
+  }, [])
+
+  // ── Setup Exam ──────────────────────────────────────────
+  function setupExam(activeSession: ActiveExamSession) {
+    const projectData = allExamsDatabase[activeSession.project_name]
+    if (!projectData) return
+
+    const availableSets = Object.keys(projectData).filter(k => k.startsWith('set_')).sort()
+    const setIndex = (parseInt(String(activeSession.class_number)) || 0) % availableSets.length
+    const examSet = projectData[availableSets[setIndex]]
+    const setName = availableSets[setIndex]
+
+    setCurrentExamSet(examSet)
+    setCurrentSetName(setName)
+
+    // inject HTML พร้อม super token buttons หลัง render
+    setTimeout(() => {
+      if (codeContainerRef.current) {
+        const templateWithTokens = examSet.codeTemplate.replace(
+          /<button class="hint-btn" onclick="useHint\((\d+)\)">💡<\/button>/g,
+          `<button class="hint-btn" onclick="window.__useHint($1)" title="ดูคำใบ้ (จำกัด 3 ครั้ง)">💡</button>
+           <button class="hint-btn super-btn" onclick="window.__useSuperToken($1)" title="ใช้ Super Token เติมคำตอบ">🌟</button>`
+        )
+        codeContainerRef.current.innerHTML = templateWithTokens
+      }
+    }, 50)
+  }
+
+  // ── Setup Review Mode ───────────────────────────────────
+  async function setupReviewMode(activeSession: ActiveExamSession) {
+    const projectData = allExamsDatabase[activeSession.project_name]
+    if (!projectData) return
+
+    const availableSets = Object.keys(projectData).filter(k => k.startsWith('set_')).sort()
+    const setIndex = (parseInt(String(activeSession.class_number)) || 0) % availableSets.length
+    const examSet = projectData[availableSets[setIndex]]
+
+    setCurrentExamSet(examSet)
+    setCurrentSetName(availableSets[setIndex])
+
+    setTimeout(async () => {
+      if (codeContainerRef.current) {
+        codeContainerRef.current.innerHTML = examSet.codeTemplate
+      }
+
+      try {
+        const { data } = await supabase.from('exam_results')
+          .select('student_answers, score')
+          .eq('student_id', activeSession.student_id)
+          .eq('project_name', activeSession.project_name)
+          .single()
+
+        if (data && codeContainerRef.current) {
+          const ansArray = data.student_answers || []
+
+          for (let i = 0; i < examSet.answers.length; i++) {
+            const input = codeContainerRef.current.querySelector(`#q${i}`) as HTMLInputElement
+            if (!input) continue
+
+            const studentAns = ansArray[i] || ""
+            input.value = studentAns
+            input.disabled = true
+
+            const cleanStudent = studentAns.trim().toLowerCase().replace(/\s+/g, '')
+            const cleanCorrect = examSet.answers[i].toLowerCase().replace(/\s+/g, '')
+
+            if (cleanStudent === cleanCorrect ||
+              (cleanCorrect === "!=null" && cleanStudent === "!=null") ||
+              (cleanCorrect === "+=" && cleanStudent === "+=")) {
+              input.classList.add('bg-green-100', 'text-green-800', 'border-green-500')
+            } else {
+              input.classList.add('bg-red-100', 'text-red-800', 'border-red-500')
+              const span = document.createElement('span')
+              span.className = "text-xs bg-green-500 text-white px-2 py-1 rounded ml-2 shadow-sm font-sans"
+              span.innerText = "เฉลย: " + examSet.answers[i]
+              input.parentNode?.insertBefore(span, input.nextSibling)
+            }
+          }
+
+          // ซ่อน hint buttons ในโหมด review
+          codeContainerRef.current.querySelectorAll('.hint-btn').forEach((btn: any) => {
+            btn.style.display = 'none'
+          })
+        }
+      } catch (err) {
+        console.error('ดึงข้อมูล Review ไม่สำเร็จ:', err)
+      }
+    }, 50)
+  }
+
+  // ── Timer ───────────────────────────────────────────────
+  function startTimer() {
+    let time = 15 * 60
+    timerRef.current = setInterval(() => {
+      time--
+      setTimeLeft(time)
+      if (time <= 0) {
+        clearInterval(timerRef.current!)
+        alert('⏳ หมดเวลาทำข้อสอบ! ระบบจะส่งคำตอบของคุณโดยอัตโนมัติ')
+        handleSubmit()
+      }
+    }, 1000)
+  }
+
+  function formatTime(seconds: number) {
+    const m = Math.floor(seconds / 60).toString().padStart(2, '0')
+    const s = (seconds % 60).toString().padStart(2, '0')
+    return `${m}:${s}`
+  }
+
+  // ── Hint System ─────────────────────────────────────────
+  useEffect(() => {
+    // expose functions ไว้บน window เพราะ codeTemplate inject onclick string ตรง ๆ
+    ;(window as any).__useHint = (index: number) => {
+      if (hintsUsed >= 3) {
+        alert('❌ คุณใช้สิทธิ์คำใบ้ปกติ (💡) ครบ 3 ครั้งแล้วครับ!\nพยายามคิดด้วยตัวเอง หรือใช้ Super Token แทนนะ')
+        return
+      }
+      const remaining = 3 - hintsUsed
+      if (!confirm(`คุณมีสิทธิ์คำใบ้ปกติ (💡) เหลือ ${remaining} ครั้ง\nต้องการใช้ 1 สิทธิ์ เพื่อเติมคำใบ้ 2 ตัวอักษรลงในช่องนี้หรือไม่?`)) return
+
+      setHintsUsed(prev => {
+        const next = prev + 1
+        if (sessionRef.current) {
+          sessionRef.current.normal_hints_used = next
+          sessionStorage.setItem('activeExamSession', JSON.stringify(sessionRef.current))
+        }
+        return next
+      })
+
+      const examSet = currentExamSet || allExamsDatabase[sessionRef.current?.project_name || '']
+      if (!examSet) return
+
+      const hint = examSet.answers[index]?.substring(0, 2) || ''
+      const input = codeContainerRef.current?.querySelector(`#q${index}`) as HTMLInputElement
+      if (input) {
+        input.value = hint
+        input.focus()
+        input.classList.add('border-blue-500', 'bg-blue-900', 'text-white')
+        setTimeout(() => input.classList.remove('border-blue-500', 'bg-blue-900', 'text-white'), 1500)
+        alert(`💡 เติมคำใบ้ "${hint}" ลงในช่องให้แล้วครับ!\n(เหลือสิทธิ์คำใบ้ปกติอีก ${3 - hintsUsed - 1} ครั้ง)`)
+      }
+    }
+
+    ;(window as any).__useSuperToken = async (index: number) => {
+      if (superTokens <= 0) {
+        alert('❌ คุณไม่มี Super Token เหลือแล้ว! (อาจารย์อาจจะสุ่มแจกให้ในระหว่างการสอบ)')
+        return
+      }
+      if (!confirm(`คุณมีเหรียญ🌟 ${superTokens} เหรียญ\nต้องการใช้ 1 เหรียญ เพื่อเติมคำตอบข้อนี้ทันทีหรือไม่?`)) return
+
+      const newTokens = superTokens - 1
+      setSuperTokens(newTokens)
+      if (sessionRef.current) {
+        sessionRef.current.super_tokens = newTokens
+        sessionStorage.setItem('activeExamSession', JSON.stringify(sessionRef.current))
+      }
+      supabase.from('students').update({ super_tokens: newTokens })
+        .eq('student_id', sessionRef.current?.student_id || '').then()
+
+      const examSet = currentExamSet
+      const input = codeContainerRef.current?.querySelector(`#q${index}`) as HTMLInputElement
+      if (input && examSet) {
+        input.value = examSet.answers[index]
+        input.classList.add('bg-yellow-100', 'border-yellow-400', 'text-yellow-800')
+        input.readOnly = true
+      }
+    }
+  }, [hintsUsed, superTokens, currentExamSet])
+
+  // ── Realtime ─────────────────────────────────────────────
+  function listenForSuperTokens(activeSession: ActiveExamSession) {
+    return supabase.channel('student-token-updates')
+      .on('postgres_changes', {
+        event: 'UPDATE', schema: 'public', table: 'students',
+        filter: `student_id=eq.${activeSession.student_id}`
+      }, (payload: any) => {
+        const newTokens = payload.new.super_tokens || 0
+        setSuperTokens(newTokens)
+        if (sessionRef.current) {
+          sessionRef.current.super_tokens = newTokens
+          sessionStorage.setItem('activeExamSession', JSON.stringify(sessionRef.current))
+        }
+      }).subscribe()
+  }
+
+  function listenForGachaDrops(activeSession: ActiveExamSession) {
+    return supabase.channel('gacha-broadcast')
+      .on('broadcast', { event: 'gacha_drop' }, (msg: any) => {
+        const payload = msg.payload || {}
+        if (payload.student_id !== activeSession.student_id) return
+        setGachaAmount(payload.amount || 1)
+        setShowGachaModal(true)
+      }).subscribe()
+  }
+
+  // ── Submit ───────────────────────────────────────────────
+  async function handleSubmit() {
+    if (!currentExamSet || !session) return
+    setIsSubmitting(true)
+    if (timerRef.current) clearInterval(timerRef.current)
+
+    let score = 0
+    const studentAnswers: string[] = []
+    const totalQuestions = currentExamSet.answers.length
+
+    for (let i = 0; i < totalQuestions; i++) {
+      const input = codeContainerRef.current?.querySelector(`#q${i}`) as HTMLInputElement
+      const value = input?.value || ''
+      studentAnswers.push(value)
+
+      const cleanStudent = value.trim().toLowerCase().replace(/\s+/g, '')
+      const cleanCorrect = currentExamSet.answers[i].toLowerCase().replace(/\s+/g, '')
+
+      if (cleanStudent === cleanCorrect ||
+        (cleanCorrect === "!=null" && cleanStudent === "!=null") ||
+        (cleanCorrect === "+=" && cleanStudent === "+=")) {
+        score += 10 / totalQuestions
+      }
+    }
+    score = Math.round(score * 10) / 10
+
+    try {
+      const { error } = await supabase.from('exam_results').insert([{
+        student_id: session.student_id,
+        project_name: session.project_name,
+        exam_set: currentSetName,
+        score,
+        hints_used: hintsUsed,
+        student_answers: studentAnswers
+      }])
+      if (error) throw error
+    } catch (err: any) {
+      alert('ส่งข้อมูลไม่สำเร็จ กรุณาแจ้งอาจารย์ผู้สอน\n' + err.message)
+    }
+
+    setFinalScore(score)
+    setShowSuccessModal(true)
+    setIsSubmitting(false)
+  }
+
+  function logoutAndExit() {
+    sessionStorage.removeItem('activeExamSession')
+    router.push('/')
+  }
+
+  // ── Render ───────────────────────────────────────────────
+  if (!session) return null
+
+  const isReview = session.mode === 'review'
+
+  return (
+    <div className="min-h-screen antialiased flex flex-col">
+      {/* Navbar */}
+      <nav className="bg-white border-b border-gray-200 sticky top-0 z-50 shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between h-16 items-center">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center text-xl font-bold">CQ</div>
+              <div>
+                <h1 className="font-semibold text-gray-900 leading-tight">ห้องสอบปฏิบัติการ</h1>
+                <p className="text-xs text-gray-500 font-medium">วิชา: {session.project_name}</p>
+              </div>
+            </div>
+
+            {!isReview && (
+              <div className="hidden sm:flex items-center justify-center">
+                <div className="bg-gray-100 px-4 py-2 rounded-full border border-gray-200 flex items-center gap-2 shadow-inner">
+                  <span className="text-lg">⏱️</span>
+                  <span className={`font-mono text-xl font-medium tracking-wider ${timeLeft <= 60 ? 'timer-warning' : 'text-gray-800'}`}>
+                    {formatTime(timeLeft)}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-center gap-4">
+              <div className="hidden sm:flex items-center gap-1.5 bg-yellow-50 px-3 py-1.5 rounded-full border border-yellow-200 shadow-sm">
+                <span className="text-lg">🌟</span>
+                <span className="font-bold text-yellow-700 text-lg">{superTokens}</span>
+              </div>
+              <div className="hidden md:block text-right">
+                <p className="text-sm font-semibold text-gray-900">{session.full_name}</p>
+                <p className="text-xs text-gray-500">{session.student_id} • ห้อง {session.room} เลขที่ {session.class_number}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </nav>
+
+      {/* Main */}
+      <main className="flex-grow bg-[#F5F5F7] py-8">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6">
+          <div className="mb-8">
+            <h2 className="text-2xl font-bold text-gray-900 mb-1">
+              {isReview ? '📚 โหมดทบทวนเฉลย' : 'เตรียมตัวให้พร้อม!'}
+            </h2>
+            <p className="text-gray-600">
+              {isReview ? 'ดูคำตอบที่คุณส่งไปและเฉลยที่ถูกต้อง' : 'เติมโค้ดให้ถูกต้องสมบูรณ์ เมื่อทำเสร็จแล้วให้กดปุ่ม "ส่งคำตอบ"'}
+            </p>
+          </div>
+
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden mb-8">
+            <div className="bg-gray-50 px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+              <div>
+                <span className={`px-2.5 py-1 text-xs font-semibold rounded-md mr-2 uppercase tracking-wider ${isReview ? 'bg-indigo-100 text-indigo-800' : 'bg-blue-100 text-blue-800'}`}>
+                  {isReview ? 'โหมดทบทวน' : 'โจทย์ที่ได้รับ'}
+                </span>
+                <span className="text-sm font-medium text-gray-600">{currentExamSet?.title || 'กำลังโหลด...'}</span>
+              </div>
+              <div className="text-sm text-gray-500 font-medium">คะแนนเต็ม: 10 คะแนน</div>
+            </div>
+            <div className="p-6">
+              <div ref={codeContainerRef} className="code-block text-sm sm:text-base">
+                {/* HTML จาก exam database จะถูก inject เข้ามาผ่าน useEffect */}
+                กำลังโหลดข้อสอบ...
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-end mb-12">
+            {isReview ? (
+              <button
+                onClick={logoutAndExit}
+                className="px-8 py-4 bg-gray-900 hover:bg-gray-800 text-white font-medium text-lg rounded-xl transition duration-200 shadow-lg active:scale-95 flex items-center gap-2"
+              >
+                กลับสู่หน้าหลัก
+              </button>
+            ) : (
+              <button
+                onClick={handleSubmit}
+                disabled={isSubmitting}
+                className="px-8 py-4 bg-[#0071E3] hover:bg-[#0077ED] disabled:opacity-60 text-white font-medium text-lg rounded-xl transition duration-200 shadow-lg shadow-blue-500/25 active:scale-95 flex items-center gap-2"
+              >
+                {isSubmitting ? (
+                  <>
+                    <div className="inline-block animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent" />
+                    กำลังส่ง...
+                  </>
+                ) : 'ส่งคำตอบ (Submit Exam)'}
+              </button>
+            )}
+          </div>
+        </div>
+      </main>
+
+      {/* Gacha Modal */}
+      {showGachaModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-gray-900/80 backdrop-blur-sm">
+          <div className="bg-white p-8 rounded-3xl shadow-2xl max-w-sm w-full mx-4 text-center">
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">🎁 Mystery Drop!</h2>
+            <p className="text-gray-500 mb-6">ผู้สอนได้ทำการสุ่มแจกเหรียญรางวัลพิเศษ!</p>
+            <div className="text-7xl mb-6 animate-bounce-gacha">🌟</div>
+            <p className="text-lg font-semibold text-yellow-600 mb-6 bg-yellow-50 py-3 rounded-lg border border-yellow-200">
+              คุณได้รับ Super Token <span className="text-2xl font-bold">{gachaAmount}</span> เหรียญ
+            </p>
+            <button
+              onClick={() => setShowGachaModal(false)}
+              className="w-full py-3 bg-[#0071E3] hover:bg-[#0077ED] text-white font-medium rounded-xl transition shadow-lg active:scale-95"
+            >
+              รับรางวัลและทำข้อสอบต่อ
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Success Modal */}
+      {showSuccessModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-gray-900/60 backdrop-blur-sm">
+          <div className="bg-white p-8 rounded-3xl shadow-2xl max-w-sm w-full mx-4 text-center">
+            <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-5 text-4xl text-green-500">✓</div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">ส่งข้อสอบสำเร็จ!</h2>
+            <p className="text-gray-500 mb-6">ระบบได้บันทึกคำตอบเรียบร้อยแล้ว รออาจารย์ปิดห้องสอบเพื่อดูเฉลยนะครับ</p>
+            <p className="text-lg font-semibold text-blue-600 mb-6 bg-blue-50 py-2 rounded-lg">
+              คะแนนที่คุณได้: {finalScore} / 10
+            </p>
+            <button
+              onClick={logoutAndExit}
+              className="w-full py-3 bg-gray-900 text-white font-medium rounded-xl"
+            >
+              กลับสู่หน้าหลัก
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
