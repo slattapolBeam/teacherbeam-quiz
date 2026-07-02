@@ -164,21 +164,37 @@ export default function DashboardPage() {
   }
 
   async function closeSession() {
-    if (!confirm('ยืนยันปิดห้องสอบวิชานี้?\nนักศึกษาจะเข้าสอบใหม่ไม่ได้ (เข้าได้แค่โหมดทบทวนเฉลยเท่านั้น)\n⚠️ Super Token ที่เหลืออยู่ของนักศึกษาทุกคนจะถูกรีเซ็ตเป็น 0')) return
+    if (!confirm('ยืนยันปิดห้องสอบวิชานี้?\nนักศึกษาจะเข้าสอบใหม่ไม่ได้ (เข้าได้แค่โหมดทบทวนเฉลยเท่านั้น)')) return
     try {
       const { error } = await supabase.from('exam_sessions')
         .update({ is_active: false }).eq('project_name', projectFilter).eq('is_active', true)
       if (error) throw error
 
-      // เหรียญที่เก็บไว้แต่ไม่ใช้ จะหมดอายุทันทีที่ session การสอบนั้นจบลง
-      const { error: resetErr } = await supabase.from('students')
-        .update({ super_tokens: 0 }).gt('super_tokens', 0)
-      if (resetErr) throw resetErr
-
       setPinActive(false)
       setCurrentPin('')
     } catch (err: any) {
       alert('ปิดห้องสอบไม่สำเร็จ: ' + err.message)
+    }
+  }
+
+  // ── Reset Super Token ของทั้งห้องเรียน (scoped ตาม room ที่เลือกอยู่) ─
+  const [isResettingRoom, setIsResettingRoom] = useState(false)
+
+  async function resetRoomTokens() {
+    if (currentRoom === 'ALL') {
+      return alert('กรุณาเลือกห้องเรียนที่ต้องการรีเซ็ตก่อนครับ (ไม่รองรับรีเซ็ตทุกห้องพร้อมกัน)')
+    }
+    if (!confirm(`ยืนยันรีเซ็ต Super Token ของนักศึกษาห้อง ${currentRoom} ทุกคนเป็น 0?`)) return
+    setIsResettingRoom(true)
+    try {
+      const { error } = await supabase.from('students')
+        .update({ super_tokens: 0 }).eq('room', currentRoom).gt('super_tokens', 0)
+      if (error) throw error
+      alert(`รีเซ็ต Super Token ห้อง ${currentRoom} เรียบร้อยแล้ว`)
+    } catch (err: any) {
+      alert('รีเซ็ต Token ไม่สำเร็จ: ' + err.message)
+    } finally {
+      setIsResettingRoom(false)
     }
   }
 
@@ -536,6 +552,16 @@ export default function DashboardPage() {
                     {room}
                   </button>
                 ))}
+                {currentRoom !== 'ALL' && (
+                  <button
+                    onClick={resetRoomTokens}
+                    disabled={isResettingRoom}
+                    title={`รีเซ็ต Super Token ของนักศึกษาห้อง ${currentRoom} ทุกคนเป็น 0`}
+                    className="px-3 py-2 rounded-xl text-sm font-medium bg-red-50 hover:bg-red-100 disabled:opacity-60 border border-red-200 text-red-600 transition shrink-0 whitespace-nowrap"
+                  >
+                    {isResettingRoom ? '⏳ กำลังรีเซ็ต...' : `🔄 Reset Token ห้อง ${currentRoom}`}
+                  </button>
+                )}
               </div>
             </div>
 
