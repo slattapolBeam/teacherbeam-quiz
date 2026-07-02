@@ -21,7 +21,7 @@ type ExamRow = {
   timestamp: string
 }
 
-type GiveTokenRow = ExamRow & { tokens: number }
+type GiveTokenRow = ExamRow & { tokens: number } 
 
 export default function DashboardPage() {
   const supabase = createClient()

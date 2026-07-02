@@ -5,164 +5,204 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import type { ActiveExamSession } from '@/types/exam'
 
+type Role = 'student' | 'teacher'
+type StudentStep = 'id' | 'subject' | 'pin'
+type SubjectStatus = 'active' | 'closed-review' | 'not-open'
+
+type Subject = {
+  id: string
+  name: string
+  description: string | null
+}
+
 export default function LoginPage() {
   const router = useRouter()
   const supabase = createClient()
 
-  const [pin, setPin] = useState('')
-  const [studentId, setStudentId] = useState('')
-  const [error, setError] = useState('')
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [isReviewing, setIsReviewing] = useState(false)
+  const [role, setRole] = useState<Role>('student')
+  const [step, setStep] = useState<StudentStep>('id')
 
-  // Token modal state
+  const [studentIdInput, setStudentIdInput] = useState('')
+  const [studentData, setStudentData] = useState<any>(null)
+  const [idError, setIdError] = useState('')
+  const [isCheckingId, setIsCheckingId] = useState(false)
+
+  const [subjects, setSubjects] = useState<Subject[]>([])
+  const [subjectStatus, setSubjectStatus] = useState<Record<string, SubjectStatus>>({})
+  const [isLoadingSubjects, setIsLoadingSubjects] = useState(false)
+  const [subjectMessage, setSubjectMessage] = useState<{ text: string; tone: 'info' | 'warning' } | null>(null)
+  const [selectedSubject, setSelectedSubject] = useState<Subject | null>(null)
+
+  const [pin, setPin] = useState('')
+  const [pinError, setPinError] = useState('')
+  const [isEnteringExam, setIsEnteringExam] = useState(false)
+
+  // Token check modal (unchanged feature from baseline)
   const [showTokenModal, setShowTokenModal] = useState(false)
   const [checkId, setCheckId] = useState('')
   const [tokenResult, setTokenResult] = useState<string | null>(null)
   const [isFetchingToken, setIsFetchingToken] = useState(false)
 
-  // Review pick modal state
-  const [showReviewPickModal, setShowReviewPickModal] = useState(false)
-  const [reviewCandidates, setReviewCandidates] = useState<{
-    studentData: any
-    projects: string[]
-  } | null>(null)
-
+  const idInputRef = useRef<HTMLInputElement>(null)
   const pinInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    pinInputRef.current?.focus()
+    idInputRef.current?.focus()
   }, [])
 
-  function showError(msg: string) {
-    setError(msg)
+  useEffect(() => {
+    if (step === 'pin') pinInputRef.current?.focus()
+  }, [step])
+
+  // ── Step 1: รหัสนักศึกษา ──────────────────────────────────
+  async function handleContinueFromId(e: React.FormEvent) {
+    e.preventDefault()
+    setIdError('')
+    if (!/^\d{13}$/.test(studentIdInput)) {
+      return setIdError('กรุณากรอกรหัสนักศึกษา 13 หลักให้ครบ')
+    }
+    setIsCheckingId(true)
+    try {
+      const { data, error } = await supabase.from('students')
+        .select('*').eq('student_id', studentIdInput).single()
+      if (error || !data) throw new Error('ไม่พบรหัสนักศึกษานี้ในระบบ')
+      setStudentData(data)
+      setStep('subject')
+      loadSubjects(studentIdInput)
+    } catch (err: any) {
+      setIdError(err.message)
+    } finally {
+      setIsCheckingId(false)
+    }
   }
 
-  // ── Login (เข้าสอบด้วย PIN) ──────────────────────────────
-  async function handleStudentLogin(e: React.FormEvent) {
-    e.preventDefault()
-    setError('')
-    setIsSubmitting(true)
-
+  // ── Step 2: เลือกวิชา ─────────────────────────────────────
+  async function loadSubjects(studentId: string) {
+    setIsLoadingSubjects(true)
+    setSubjectMessage(null)
     try {
-      // 1. ดึงข้อมูล Session
-      const { data: sessionData, error: sessionError } = await supabase
-        .from('exam_sessions').select('*').eq('pin_code', pin).single()
-      if (sessionError || !sessionData) throw new Error('รหัส PIN ไม่ถูกต้อง')
-      const projectName = sessionData.project_name
+      const { data: subjectsData, error: subjectsErr } = await supabase
+        .from('subjects').select('id, name, description').eq('is_active', true).order('name')
+      if (subjectsErr) throw subjectsErr
 
-      // 2. ดึงข้อมูล Student
-      const { data: studentData, error: studentError } = await supabase
-        .from('students').select('*').eq('student_id', studentId).single()
-      if (studentError || !studentData) throw new Error('ไม่พบรหัสนักศึกษานี้ในระบบ')
+      const list = subjectsData || []
+      setSubjects(list)
+      if (list.length === 0) return
 
-      // 3. ตรวจสอบการสอบซ้ำ
-      const { data: resultData } = await supabase
-        .from('exam_results').select('id')
-        .eq('student_id', studentId).eq('project_name', projectName)
+      const [{ data: activeSessions }, { data: resultsData }] = await Promise.all([
+        supabase.from('exam_sessions').select('project_name').eq('is_active', true),
+        supabase.from('exam_results').select('project_name').eq('student_id', studentId),
+      ])
 
+      const activeNames = new Set((activeSessions || []).map((s: any) => s.project_name))
+      const resultNames = new Set((resultsData || []).map((r: any) => r.project_name))
+
+      const status: Record<string, SubjectStatus> = {}
+      list.forEach((s: Subject) => {
+        if (activeNames.has(s.name)) status[s.name] = 'active'
+        else if (resultNames.has(s.name)) status[s.name] = 'closed-review'
+        else status[s.name] = 'not-open'
+      })
+      setSubjectStatus(status)
+    } catch (err: any) {
+      setSubjectMessage({ text: 'โหลดรายวิชาไม่สำเร็จ: ' + err.message, tone: 'warning' })
+    } finally {
+      setIsLoadingSubjects(false)
+    }
+  }
+
+  function handleSubjectClick(subject: Subject) {
+    const status = subjectStatus[subject.name]
+
+    if (status === 'active') {
+      setSelectedSubject(subject)
+      setPin('')
+      setPinError('')
+      setSubjectMessage(null)
+      setStep('pin')
+      return
+    }
+
+    if (status === 'closed-review') {
+      setSubjectMessage({ text: `ห้องสอบวิชา ${subject.name} ปิดแล้ว กำลังพาไปโหมดทบทวนเฉลย...`, tone: 'info' })
       const activeSession: ActiveExamSession = {
-        student_id: studentId,
+        student_id: studentData.student_id,
         full_name: `${studentData.first_name} ${studentData.last_name}`,
         room: studentData.room,
         class_number: studentData.class_number,
-        project_name: projectName,
+        project_name: subject.name,
+        super_tokens: studentData.super_tokens || 0,
+        mode: 'review',
+        got_gacha: false,
+        gacha_amount: 0,
+      }
+      setTimeout(() => {
+        sessionStorage.setItem('activeExamSession', JSON.stringify(activeSession))
+        router.push('/exam')
+      }, 700)
+      return
+    }
+
+    setSubjectMessage({ text: `วิชา ${subject.name} ยังไม่เปิดสอบครับ ลองเลือกวิชาอื่นก่อนนะ`, tone: 'warning' })
+  }
+
+  // ── Step 3: กรอก PIN ──────────────────────────────────────
+  async function handleEnterExam(e: React.FormEvent) {
+    e.preventDefault()
+    if (!selectedSubject || !studentData) return
+    setPinError('')
+    if (!/^\d{6}$/.test(pin)) return setPinError('กรุณากรอกรหัส PIN 6 หลัก')
+
+    setIsEnteringExam(true)
+    try {
+      const { data: sessionData, error: sessionError } = await supabase
+        .from('exam_sessions').select('*')
+        .eq('project_name', selectedSubject.name).eq('pin_code', pin).eq('is_active', true).single()
+      if (sessionError || !sessionData) throw new Error('รหัส PIN ไม่ถูกต้อง หรือห้องสอบวิชานี้ถูกปิดไปแล้ว')
+
+      const { data: resultData } = await supabase
+        .from('exam_results').select('id')
+        .eq('student_id', studentData.student_id).eq('project_name', selectedSubject.name)
+      if (resultData && resultData.length > 0) {
+        throw new Error('คุณได้ส่งข้อสอบแล้ว (จะดูเฉลยได้เมื่ออาจารย์ปิดห้องสอบเท่านั้น)')
+      }
+
+      const activeSession: ActiveExamSession = {
+        student_id: studentData.student_id,
+        full_name: `${studentData.first_name} ${studentData.last_name}`,
+        room: studentData.room,
+        class_number: studentData.class_number,
+        project_name: selectedSubject.name,
         pin_code: pin,
         mode: 'exam',
         super_tokens: studentData.super_tokens || 0,
         got_gacha: false,
         gacha_amount: 0,
       }
-
-      if (resultData && resultData.length > 0) {
-        if (!sessionData.is_active) {
-          activeSession.mode = 'review'
-          sessionStorage.setItem('activeExamSession', JSON.stringify(activeSession))
-          router.push('/exam')
-          return
-        } else {
-          throw new Error('คุณได้ส่งข้อสอบแล้ว (จะดูเฉลยได้เมื่ออาจารย์ปิดห้องสอบเท่านั้น)')
-        }
-      }
-
-      if (!sessionData.is_active) throw new Error('ห้องสอบนี้หมดเวลา และถูกปิดรับคำตอบไปแล้ว')
-
-      // 4. เข้าสอบปกติ (Gacha ปิดแล้วตามที่คุยกัน)
       sessionStorage.setItem('activeExamSession', JSON.stringify(activeSession))
       router.push('/exam')
-
     } catch (err: any) {
-      showError(err.message)
+      setPinError(err.message)
     } finally {
-      setIsSubmitting(false)
+      setIsEnteringExam(false)
     }
   }
 
-  // ── Review Mode (ไม่ต้องใช้ PIN) ─────────────────────────
-  async function handleReviewLookup() {
-    setError('')
-    if (!studentId || !/^\d{13}$/.test(studentId)) {
-      return showError('กรุณากรอกรหัสนักศึกษา 13 หลักให้ครบก่อนกดทบทวนเฉลย')
-    }
-    setIsReviewing(true)
-
-    try {
-      const { data: studentData, error: studentError } = await supabase
-        .from('students').select('*').eq('student_id', studentId).single()
-      if (studentError || !studentData) throw new Error('ไม่พบรหัสนักศึกษานี้ในระบบ')
-
-      const { data: resultsData, error: resultsError } = await supabase
-        .from('exam_results').select('project_name').eq('student_id', studentId)
-      if (resultsError) throw resultsError
-      if (!resultsData || resultsData.length === 0)
-        throw new Error('ยังไม่พบประวัติการสอบของรหัสนักศึกษานี้เลย')
-
-      const projectNames = [...new Set(resultsData.map((r: any) => r.project_name as string))]
-
-      const { data: sessionsData, error: sessionsError } = await supabase
-        .from('exam_sessions').select('project_name, is_active').in('project_name', projectNames)
-      if (sessionsError) throw sessionsError
-
-      const closedProjects = projectNames.filter(pName => {
-        const sessionsForProject = sessionsData.filter((s: any) => s.project_name === pName)
-        return sessionsForProject.length > 0 && sessionsForProject.every((s: any) => !s.is_active)
-      })
-
-      if (closedProjects.length === 0)
-        throw new Error('ยังไม่มีวิชาไหนที่ห้องสอบถูกปิดแล้ว กรุณารออาจารย์ปิดห้องสอบก่อน')
-
-      if (closedProjects.length === 1) {
-        enterReviewMode(studentData, closedProjects[0])
-        return
-      }
-
-      setReviewCandidates({ studentData, projects: closedProjects })
-      setShowReviewPickModal(true)
-
-    } catch (err: any) {
-      showError(err.message)
-    } finally {
-      setIsReviewing(false)
-    }
+  function goBackToId() {
+    setStep('id')
+    setSubjects([])
+    setSubjectStatus({})
+    setSubjectMessage(null)
+    setSelectedSubject(null)
   }
 
-  function enterReviewMode(studentData: any, projectName: string) {
-    const activeSession: ActiveExamSession = {
-      student_id: studentData.student_id,
-      full_name: `${studentData.first_name} ${studentData.last_name}`,
-      room: studentData.room,
-      class_number: studentData.class_number,
-      project_name: projectName,
-      super_tokens: studentData.super_tokens || 0,
-      mode: 'review',
-      got_gacha: false,
-      gacha_amount: 0,
-    }
-    sessionStorage.setItem('activeExamSession', JSON.stringify(activeSession))
-    router.push('/exam')
+  function goBackToSubject() {
+    setStep('subject')
+    setPin('')
+    setPinError('')
   }
 
-  // ── Token Check Modal ─────────────────────────────────────
+  // ── Super Token check modal (unchanged) ───────────────────
   async function fetchTokenCount() {
     if (!checkId) return
     setIsFetchingToken(true)
@@ -188,102 +228,178 @@ export default function LoginPage() {
 
   return (
     <main className="min-h-screen flex flex-col items-center justify-center p-4 selection:bg-blue-500 selection:text-white relative overflow-hidden">
-      {/* Background blobs */}
       <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-blue-300/20 rounded-full blur-[120px] pointer-events-none" />
       <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-indigo-300/20 rounded-full blur-[120px] pointer-events-none" />
 
-      {/* Login Card */}
       <div className="w-full max-w-md z-10 apple-card p-8 sm:p-10 rounded-[2.5rem] shadow-2xl shadow-gray-200/50">
-        <div className="text-center mb-8">
+        <div className="text-center mb-6">
           <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-50 rounded-2xl text-3xl mb-5 shadow-inner">🧑‍💻</div>
           <h1 className="text-3xl font-bold tracking-tight text-gray-900 mb-2">Coding Quiz</h1>
-          <p className="text-sm text-gray-500 font-medium">เข้าสู่ระบบเพื่อทำข้อสอบ หรือทบทวนเฉลย</p>
+          <p className="text-sm text-gray-500 font-medium">เข้าสู่ระบบเพื่อทำข้อสอบ หรือดูแลห้องสอบ</p>
         </div>
 
-        <form onSubmit={handleStudentLogin}>
-          {/* PIN */}
-          <div className="mb-5">
-            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 ml-1">
-              รหัสห้องสอบ (PIN){' '}
-              <span className="normal-case font-normal text-gray-400">— ไม่ต้องกรอกถ้าต้องการแค่ทบทวนเฉลย</span>
-            </label>
-            <input
-              ref={pinInputRef}
-              type="text"
-              value={pin}
-              onChange={e => setPin(e.target.value.replace(/[^0-9]/g, ''))}
-              maxLength={6}
-              autoComplete="off"
-              className="w-full px-5 py-4 bg-white rounded-2xl border border-gray-200 focus:outline-none focus:border-blue-500 transition text-center tracking-[0.5em] text-2xl font-mono placeholder:tracking-normal placeholder:text-gray-300 input-glow"
-              placeholder="123456"
-            />
-          </div>
-
-          {/* Student ID */}
-          <div className="mb-8">
-            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 ml-1">
-              รหัสนักศึกษา (13 หลัก)
-            </label>
-            <div className="relative">
-              <span className="absolute inset-y-0 left-0 flex items-center pl-4 text-gray-400">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
-                </svg>
-              </span>
-              <input
-                type="text"
-                value={studentId}
-                onChange={e => setStudentId(e.target.value.replace(/[^0-9]/g, ''))}
-                required
-                maxLength={13}
-                autoComplete="off"
-                className="w-full pl-12 pr-5 py-4 bg-white rounded-2xl border border-gray-200 focus:outline-none focus:border-blue-500 transition font-mono text-lg placeholder:text-gray-300 input-glow"
-                placeholder="683179xxxxxxx"
-              />
-            </div>
-          </div>
-
-          {/* Error */}
-          {error && (
-            <div className="mb-6 p-4 bg-red-50 text-red-600 text-sm font-medium rounded-xl border border-red-100 flex items-start gap-3">
-              <span className="shrink-0 mt-0.5">⚠️</span>
-              <span dangerouslySetInnerHTML={{ __html: error }} />
-            </div>
-          )}
-
-          {/* Submit */}
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="w-full py-4 bg-[#0071E3] hover:bg-[#0077ED] disabled:opacity-60 text-white font-semibold rounded-2xl transition duration-200 shadow-lg shadow-blue-500/25 active:scale-[0.98] flex justify-center items-center gap-2 text-lg"
-          >
-            {isSubmitting ? 'กำลังตรวจสอบ...' : 'ตรวจสอบข้อมูลและเข้าสอบ'}
-          </button>
-
-          {/* Review button */}
+        <div className="flex bg-gray-100 rounded-full p-1 mb-6">
           <button
             type="button"
-            onClick={handleReviewLookup}
-            disabled={isReviewing}
-            className="w-full mt-3 py-3.5 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-60 text-indigo-600 font-semibold rounded-2xl transition duration-200 active:scale-[0.98] flex justify-center items-center gap-2 text-sm border border-indigo-100"
+            onClick={() => setRole('student')}
+            className={`flex-1 py-2.5 rounded-full text-sm font-semibold transition ${role === 'student' ? 'bg-[#0071E3] text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
           >
-            <span>📚</span>
-            <span>{isReviewing ? 'กำลังค้นหา...' : 'ทบทวนเฉลยข้อสอบเดิม (ใช้แค่รหัสนักศึกษา)'}</span>
+            🎓 นักศึกษา
           </button>
-        </form>
-
-        {/* Super Token check */}
-        <div className="mt-8 text-center pt-6 border-t border-gray-100">
           <button
-            onClick={() => setShowTokenModal(true)}
-            className="text-sm text-yellow-600 font-medium hover:text-yellow-700 flex items-center justify-center gap-1 mx-auto transition bg-yellow-50 px-4 py-2 rounded-full"
+            type="button"
+            onClick={() => setRole('teacher')}
+            className={`flex-1 py-2.5 rounded-full text-sm font-semibold transition ${role === 'teacher' ? 'bg-[#0071E3] text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
           >
-            <span>🌟</span> เช็กยอด Super Token ของฉัน
+            🧑‍🏫 อาจารย์
           </button>
         </div>
+
+        {role === 'teacher' ? (
+          <div className="text-center py-2">
+            <div className="inline-flex items-center justify-center w-12 h-12 bg-gray-100 rounded-2xl text-2xl mb-4">🧑‍🏫</div>
+            <p className="text-sm text-gray-500 mb-6 leading-relaxed">ระบบจะพาไปหน้า Dashboard สำหรับจัดการห้องสอบและดูคะแนน</p>
+            <button
+              onClick={() => router.push('/dashboard')}
+              className="w-full py-4 bg-[#0071E3] hover:bg-[#0077ED] text-white font-semibold rounded-2xl transition duration-200 shadow-lg shadow-blue-500/25 active:scale-[0.98]"
+            >
+              ไปที่ Dashboard →
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="flex justify-center gap-1.5 mb-6">
+              {(['id', 'subject', 'pin'] as StudentStep[]).map(s => (
+                <span key={s} className={`w-2 h-2 rounded-full transition ${step === s ? 'bg-[#0071E3]' : 'bg-gray-200'}`} />
+              ))}
+            </div>
+
+            {step === 'id' && (
+              <form onSubmit={handleContinueFromId}>
+                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 ml-1">รหัสนักศึกษา (13 หลัก)</label>
+                <input
+                  ref={idInputRef}
+                  type="text"
+                  value={studentIdInput}
+                  onChange={e => setStudentIdInput(e.target.value.replace(/[^0-9]/g, ''))}
+                  maxLength={13}
+                  autoComplete="off"
+                  className="w-full px-5 py-4 bg-white rounded-2xl border border-gray-200 focus:outline-none focus:border-blue-500 transition font-mono text-lg text-center placeholder:text-gray-300 input-glow mb-4"
+                  placeholder="683179xxxxxxx"
+                />
+                {idError && (
+                  <div className="mb-4 p-3 bg-red-50 text-red-600 text-sm font-medium rounded-xl border border-red-100 text-center">
+                    {idError}
+                  </div>
+                )}
+                <button
+                  type="submit"
+                  disabled={isCheckingId}
+                  className="w-full py-4 bg-[#0071E3] hover:bg-[#0077ED] disabled:opacity-60 text-white font-semibold rounded-2xl transition duration-200 shadow-lg shadow-blue-500/25 active:scale-[0.98]"
+                >
+                  {isCheckingId ? 'กำลังตรวจสอบ...' : 'ถัดไป →'}
+                </button>
+              </form>
+            )}
+
+            {step === 'subject' && (
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 ml-1">เลือกวิชา</p>
+
+                {isLoadingSubjects ? (
+                  <div className="py-10 text-center text-gray-400 text-sm">
+                    <div className="inline-block animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent mb-2" /><br />กำลังโหลดรายวิชา...
+                  </div>
+                ) : subjects.length === 0 ? (
+                  <div className="py-8 text-center text-gray-400 text-sm">ยังไม่มีวิชาที่เปิดให้เลือกในระบบ กรุณาติดต่ออาจารย์ผู้สอน</div>
+                ) : (
+                  <div className="space-y-2.5 mb-2">
+                    {subjects.map(subject => {
+                      const status = subjectStatus[subject.name]
+                      const badge = status === 'active'
+                        ? { text: '🟢 กำลังเปิดสอบ', className: 'text-green-700' }
+                        : status === 'closed-review'
+                        ? { text: '🔵 ปิดห้องแล้ว · ดูเฉลยได้', className: 'text-blue-700' }
+                        : { text: '⚪ ยังไม่เปิดสอบ', className: 'text-gray-400' }
+                      return (
+                        <button
+                          key={subject.id}
+                          type="button"
+                          onClick={() => handleSubjectClick(subject)}
+                          className={`w-full flex items-center gap-3 p-3.5 bg-white border border-gray-200 rounded-3xl transition hover:border-blue-300 active:scale-[0.99] text-left ${status === 'not-open' ? 'opacity-75' : ''}`}
+                        >
+                          <div className="w-9 h-9 rounded-2xl bg-blue-50 flex items-center justify-center text-lg shrink-0">📘</div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-gray-900 truncate">{subject.name}</p>
+                            <p className={`text-xs mt-0.5 ${badge.className}`}>{badge.text}</p>
+                          </div>
+                          <span className="text-gray-300 text-lg">›</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {subjectMessage && (
+                  <p className={`text-xs text-center mt-2 mb-1 leading-relaxed ${subjectMessage.tone === 'warning' ? 'text-orange-600' : 'text-blue-600'}`}>
+                    {subjectMessage.text}
+                  </p>
+                )}
+
+                <button type="button" onClick={goBackToId} className="w-full mt-3 py-2.5 text-sm text-gray-500 hover:text-gray-800 transition">
+                  ← ย้อนกลับ
+                </button>
+              </div>
+            )}
+
+            {step === 'pin' && selectedSubject && (
+              <form onSubmit={handleEnterExam}>
+                <div className="text-center mb-5">
+                  <span className="inline-block bg-blue-50 text-blue-700 text-xs font-semibold px-3 py-1 rounded-full">{selectedSubject.name}</span>
+                </div>
+                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 text-center">รหัสห้องสอบ (PIN)</label>
+                <input
+                  ref={pinInputRef}
+                  type="text"
+                  value={pin}
+                  onChange={e => setPin(e.target.value.replace(/[^0-9]/g, ''))}
+                  maxLength={6}
+                  autoComplete="off"
+                  className="w-full px-5 py-4 bg-white rounded-2xl border border-gray-200 focus:outline-none focus:border-blue-500 transition text-center tracking-[0.5em] text-2xl font-mono placeholder:tracking-normal placeholder:text-gray-300 input-glow mb-4"
+                  placeholder="123456"
+                />
+                {pinError && (
+                  <div className="mb-4 p-3 bg-red-50 text-red-600 text-sm font-medium rounded-xl border border-red-100 text-center">
+                    {pinError}
+                  </div>
+                )}
+                <button
+                  type="submit"
+                  disabled={isEnteringExam}
+                  className="w-full py-4 bg-[#0071E3] hover:bg-[#0077ED] disabled:opacity-60 text-white font-semibold rounded-2xl transition duration-200 shadow-lg shadow-blue-500/25 active:scale-[0.98] mb-2"
+                >
+                  {isEnteringExam ? 'กำลังตรวจสอบ...' : 'เข้าสอบ →'}
+                </button>
+                <button type="button" onClick={goBackToSubject} className="w-full py-2.5 text-sm text-gray-500 hover:text-gray-800 transition">
+                  ← เลือกวิชาอื่น
+                </button>
+              </form>
+            )}
+          </>
+        )}
+
+        {role === 'student' && (
+          <div className="mt-8 text-center pt-6 border-t border-gray-100">
+            <button
+              onClick={() => setShowTokenModal(true)}
+              className="text-sm text-yellow-600 font-medium hover:text-yellow-700 flex items-center justify-center gap-1 mx-auto transition bg-yellow-50 px-4 py-2 rounded-full"
+            >
+              <span>🌟</span> เช็กยอด Super Token ของฉัน
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* Token Modal */}
       {showTokenModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
           <div className="bg-white p-8 rounded-3xl shadow-2xl max-w-sm w-full mx-4 text-center animate-in fade-in zoom-in-95 duration-200">
@@ -311,39 +427,6 @@ export default function LoginPage() {
             )}
             <button onClick={closeTokenModal} className="text-sm text-gray-500 hover:text-gray-800 underline">
               ปิดหน้าต่าง
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Review Pick Modal */}
-      {showReviewPickModal && reviewCandidates && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-          <div className="bg-white p-8 rounded-3xl shadow-2xl max-w-sm w-full mx-4 animate-in fade-in zoom-in-95 duration-200">
-            <div className="text-center mb-5">
-              <div className="text-4xl mb-3">📚</div>
-              <h2 className="text-xl font-bold text-gray-900">เลือกวิชาที่ต้องการทบทวนเฉลย</h2>
-              <p className="text-sm text-gray-500 mt-1">พบผลสอบที่ดูเฉลยได้มากกว่า 1 วิชา</p>
-            </div>
-            <div className="space-y-2 mb-4">
-              {reviewCandidates.projects.map(p => (
-                <button
-                  key={p}
-                  onClick={() => {
-                    setShowReviewPickModal(false)
-                    enterReviewMode(reviewCandidates.studentData, p)
-                  }}
-                  className="w-full text-left px-4 py-3 bg-gray-50 hover:bg-indigo-50 border border-gray-100 hover:border-indigo-200 rounded-xl transition font-medium text-gray-800"
-                >
-                  📖 {p}
-                </button>
-              ))}
-            </div>
-            <button
-              onClick={() => setShowReviewPickModal(false)}
-              className="w-full py-2.5 text-sm text-gray-500 hover:text-gray-800 underline"
-            >
-              ยกเลิก
             </button>
           </div>
         </div>
