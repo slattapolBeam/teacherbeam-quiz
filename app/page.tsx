@@ -238,23 +238,27 @@ export default function LoginPage() {
           <p className="text-sm text-gray-500 font-medium">เข้าสู่ระบบเพื่อทำข้อสอบ หรือดูแลห้องสอบ</p>
         </div>
 
-        <div className="flex bg-gray-100 rounded-full p-1 mb-6">
+        <div className="relative grid grid-cols-2 bg-gray-100 rounded-full p-1 mb-6">
+          <div
+            className={`absolute inset-y-1 left-1 w-[calc(50%-4px)] rounded-full bg-[#0071E3] shadow-sm transition-transform duration-[350ms] ease-[cubic-bezier(0.34,1.56,0.64,1)] ${role === 'teacher' ? 'translate-x-full' : 'translate-x-0'}`}
+          />
           <button
             type="button"
             onClick={() => setRole('student')}
-            className={`flex-1 py-2.5 rounded-full text-sm font-semibold transition ${role === 'student' ? 'bg-[#0071E3] text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+            className={`relative z-10 py-2.5 rounded-full text-sm font-semibold transition-colors duration-200 ${role === 'student' ? 'text-white' : 'text-gray-500 hover:text-gray-700'}`}
           >
             🎓 นักศึกษา
           </button>
           <button
             type="button"
             onClick={() => setRole('teacher')}
-            className={`flex-1 py-2.5 rounded-full text-sm font-semibold transition ${role === 'teacher' ? 'bg-[#0071E3] text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+            className={`relative z-10 py-2.5 rounded-full text-sm font-semibold transition-colors duration-200 ${role === 'teacher' ? 'text-white' : 'text-gray-500 hover:text-gray-700'}`}
           >
             🧑‍🏫 อาจารย์
           </button>
         </div>
 
+        <div key={role} className="role-switch-enter">
         {role === 'teacher' ? (
           <div className="text-center py-2">
             <div className="inline-flex items-center justify-center w-12 h-12 bg-gray-100 rounded-2xl text-2xl mb-4">🧑‍🏫</div>
@@ -387,6 +391,7 @@ export default function LoginPage() {
             )}
           </>
         )}
+        </div>
 
         {role === 'student' && (
           <div className="mt-8 text-center pt-6 border-t border-gray-100">
