@@ -27,3 +27,9 @@ export interface ExamSession {
   is_active: boolean
   created_at: string
 }
+
+export interface ExamSet {
+  title: string
+  codeTemplate: string
+  answers: string[]
+}

@@ -3,16 +3,16 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { allExamsDatabase } from '@/data/examDatabase'
-import type { ActiveExamSession } from '@/types/exam'
+import type { ActiveExamSession, ExamSet } from '@/types/exam'
 
 export default function ExamPage() {
   const router = useRouter()
   const supabase = createClient()
 
   const [session, setSession] = useState<ActiveExamSession | null>(null)
-  const [currentExamSet, setCurrentExamSet] = useState<any>(null)
+  const [currentExamSet, setCurrentExamSet] = useState<ExamSet | null>(null)
   const [currentSetName, setCurrentSetName] = useState('')
+  const [loadError, setLoadError] = useState('')
   const [timeLeft, setTimeLeft] = useState(15 * 60)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [superTokens, setSuperTokens] = useState(0)
@@ -66,15 +66,42 @@ export default function ExamPage() {
     }
   }, [])
 
-  // ── Setup Exam ──────────────────────────────────────────
-  function setupExam(activeSession: ActiveExamSession) {
-    const projectData = allExamsDatabase[activeSession.project_name]
-    if (!projectData) return
+  // ── ดึงข้อสอบจาก exam_questions (Phase 3: ไม่มี hardcode fallback แล้ว) ──
+  async function fetchExamSet(projectName: string, classNumber: number): Promise<{ examSet: ExamSet; setName: string } | null> {
+    const { data: setRows, error: setsErr } = await supabase
+      .from('exam_questions').select('set_name').eq('project_name', projectName)
 
-    const availableSets = Object.keys(projectData).filter(k => k.startsWith('set_')).sort()
-    const setIndex = (parseInt(String(activeSession.class_number)) || 0) % availableSets.length
-    const examSet = projectData[availableSets[setIndex]]
+    if (setsErr || !setRows || setRows.length === 0) {
+      setLoadError(`ไม่พบข้อสอบสำหรับวิชา "${projectName}" ในระบบ กรุณาแจ้งอาจารย์ผู้สอนให้เพิ่มข้อสอบก่อนครับ`)
+      return null
+    }
+
+    const availableSets = [...new Set(setRows.map((r: any) => r.set_name as string))].sort()
+    const setIndex = (classNumber || 0) % availableSets.length
     const setName = availableSets[setIndex]
+
+    const { data: row, error: rowErr } = await supabase
+      .from('exam_questions').select('question, code, answers')
+      .eq('project_name', projectName).eq('set_name', setName).single()
+
+    if (rowErr || !row) {
+      setLoadError(`โหลดข้อสอบชุด "${setName}" ไม่สำเร็จ กรุณาแจ้งอาจารย์ผู้สอนครับ`)
+      return null
+    }
+
+    const examSet: ExamSet = {
+      title: row.question,
+      codeTemplate: row.code || '',
+      answers: (row.answers as string[]) || [],
+    }
+    return { examSet, setName }
+  }
+
+  // ── Setup Exam ──────────────────────────────────────────
+  async function setupExam(activeSession: ActiveExamSession) {
+    const result = await fetchExamSet(activeSession.project_name, activeSession.class_number)
+    if (!result) return
+    const { examSet, setName } = result
 
     setCurrentExamSet(examSet)
     setCurrentSetName(setName)
@@ -94,15 +121,12 @@ export default function ExamPage() {
 
   // ── Setup Review Mode ───────────────────────────────────
   async function setupReviewMode(activeSession: ActiveExamSession) {
-    const projectData = allExamsDatabase[activeSession.project_name]
-    if (!projectData) return
-
-    const availableSets = Object.keys(projectData).filter(k => k.startsWith('set_')).sort()
-    const setIndex = (parseInt(String(activeSession.class_number)) || 0) % availableSets.length
-    const examSet = projectData[availableSets[setIndex]]
+    const result = await fetchExamSet(activeSession.project_name, activeSession.class_number)
+    if (!result) return
+    const { examSet, setName } = result
 
     setCurrentExamSet(examSet)
-    setCurrentSetName(availableSets[setIndex])
+    setCurrentSetName(setName)
 
     setTimeout(async () => {
       if (codeContainerRef.current) {
@@ -194,7 +218,7 @@ export default function ExamPage() {
         return next
       })
 
-      const examSet = currentExamSet || allExamsDatabase[sessionRef.current?.project_name || '']
+      const examSet = currentExamSet
       if (!examSet) return
 
       const hint = examSet.answers[index]?.substring(0, 2) || ''
@@ -312,6 +336,24 @@ export default function ExamPage() {
 
   // ── Render ───────────────────────────────────────────────
   if (!session) return null
+
+  if (loadError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#F5F5F7] p-4">
+        <div className="max-w-md w-full bg-white rounded-3xl shadow-xl border border-gray-100 p-8 text-center">
+          <div className="w-16 h-16 bg-red-50 rounded-2xl flex items-center justify-center text-3xl mx-auto mb-5">⚠️</div>
+          <h2 className="text-xl font-bold text-gray-900 mb-2">โหลดข้อสอบไม่สำเร็จ</h2>
+          <p className="text-sm text-gray-500 mb-6 leading-relaxed">{loadError}</p>
+          <button
+            onClick={logoutAndExit}
+            className="w-full py-3 bg-gray-900 hover:bg-gray-800 text-white font-medium rounded-2xl transition"
+          >
+            กลับสู่หน้าหลัก
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   const isReview = session.mode === 'review'
 
