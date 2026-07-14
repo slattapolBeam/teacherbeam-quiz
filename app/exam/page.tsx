@@ -3,6 +3,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import { submitExam, useSuperToken } from '@/app/actions/exam'
+import { getExamSession, clearExamSession } from '@/app/actions/session'
 import type { ActiveExamSession, ExamSet } from '@/types/exam'
 
 export default function ExamPage() {
@@ -31,34 +33,40 @@ export default function ExamPage() {
 
   // ── Init ────────────────────────────────────────────────
   useEffect(() => {
-    const sessionStr = sessionStorage.getItem('activeExamSession')
-    if (!sessionStr) { router.push('/'); return }
-
-    const activeSession: ActiveExamSession = JSON.parse(sessionStr)
-    sessionRef.current = activeSession
-    setSession(activeSession)
-    setSuperTokens(activeSession.super_tokens || 0)
-
     let tokenChannel: ReturnType<typeof supabase.channel> | null = null
     let gachaChannel: ReturnType<typeof supabase.channel> | null = null
+    let cancelled = false
 
-    if (activeSession.mode === 'review') {
-      setupReviewMode(activeSession)
-    } else {
-      setupExam(activeSession)
-      startTimer()
-      tokenChannel = listenForSuperTokens(activeSession)
-      gachaChannel = listenForGachaDrops(activeSession)
-    }
-
-    // Anti-cheat: detect tab switch
     const handleVisibility = () => {
       if (document.hidden && sessionRef.current?.mode !== 'review') {
         console.warn('Tab switch detected')
       }
     }
-    document.addEventListener('visibilitychange', handleVisibility)
+
+    ;(async () => {
+      // session มาจาก httpOnly cookie ที่ server verify แล้วเท่านั้น ไม่เชื่อ client storage อีกต่อไป
+      const activeSession = await getExamSession()
+      if (cancelled) return
+      if (!activeSession) { router.push('/'); return }
+
+      sessionRef.current = activeSession
+      setSession(activeSession)
+      setSuperTokens(activeSession.super_tokens || 0)
+
+      if (activeSession.mode === 'review') {
+        setupReviewMode(activeSession)
+      } else {
+        setupExam(activeSession)
+        startTimer()
+        tokenChannel = listenForSuperTokens(activeSession)
+        gachaChannel = listenForGachaDrops(activeSession)
+      }
+
+      document.addEventListener('visibilitychange', handleVisibility)
+    })()
+
     return () => {
+      cancelled = true
       document.removeEventListener('visibilitychange', handleVisibility)
       if (timerRef.current) clearInterval(timerRef.current)
       if (tokenChannel) supabase.removeChannel(tokenChannel)
@@ -209,14 +217,7 @@ export default function ExamPage() {
       const remaining = 3 - hintsUsed
       if (!confirm(`คุณมีสิทธิ์คำใบ้ปกติ (💡) เหลือ ${remaining} ครั้ง\nต้องการใช้ 1 สิทธิ์ เพื่อเติมคำใบ้ 2 ตัวอักษรลงในช่องนี้หรือไม่?`)) return
 
-      setHintsUsed(prev => {
-        const next = prev + 1
-        if (sessionRef.current) {
-          sessionRef.current.normal_hints_used = next
-          sessionStorage.setItem('activeExamSession', JSON.stringify(sessionRef.current))
-        }
-        return next
-      })
+      setHintsUsed(prev => prev + 1)
 
       const examSet = currentExamSet
       if (!examSet) return
@@ -239,14 +240,13 @@ export default function ExamPage() {
       }
       if (!confirm(`คุณมีเหรียญ🌟 ${superTokens} เหรียญ\nต้องการใช้ 1 เหรียญ เพื่อเติมคำตอบข้อนี้ทันทีหรือไม่?`)) return
 
-      const newTokens = superTokens - 1
-      setSuperTokens(newTokens)
-      if (sessionRef.current) {
-        sessionRef.current.super_tokens = newTokens
-        sessionStorage.setItem('activeExamSession', JSON.stringify(sessionRef.current))
+      const result = await useSuperToken()
+      if (!result.success) {
+        alert('❌ ' + result.error)
+        return
       }
-      supabase.from('students').update({ super_tokens: newTokens })
-        .eq('student_id', sessionRef.current?.student_id || '').then()
+
+      setSuperTokens(result.tokens)
 
       const examSet = currentExamSet
       const input = codeContainerRef.current?.querySelector(`#q${index}`) as HTMLInputElement
@@ -265,12 +265,7 @@ export default function ExamPage() {
         event: 'UPDATE', schema: 'public', table: 'students',
         filter: `student_id=eq.${activeSession.student_id}`
       }, (payload: any) => {
-        const newTokens = payload.new.super_tokens || 0
-        setSuperTokens(newTokens)
-        if (sessionRef.current) {
-          sessionRef.current.super_tokens = newTokens
-          sessionStorage.setItem('activeExamSession', JSON.stringify(sessionRef.current))
-        }
+        setSuperTokens(payload.new.super_tokens || 0)
       }).subscribe()
   }
 
@@ -290,47 +285,33 @@ export default function ExamPage() {
     setIsSubmitting(true)
     if (timerRef.current) clearInterval(timerRef.current)
 
-    let score = 0
     const studentAnswers: string[] = []
     const totalQuestions = currentExamSet.answers.length
-
     for (let i = 0; i < totalQuestions; i++) {
       const input = codeContainerRef.current?.querySelector(`#q${i}`) as HTMLInputElement
-      const value = input?.value || ''
-      studentAnswers.push(value)
-
-      const cleanStudent = value.trim().toLowerCase().replace(/\s+/g, '')
-      const cleanCorrect = currentExamSet.answers[i].toLowerCase().replace(/\s+/g, '')
-
-      if (cleanStudent === cleanCorrect ||
-        (cleanCorrect === "!=null" && cleanStudent === "!=null") ||
-        (cleanCorrect === "+=" && cleanStudent === "+=")) {
-        score += 10 / totalQuestions
-      }
-    }
-    score = Math.round(score * 10) / 10
-
-    try {
-      const { error } = await supabase.from('exam_results').insert([{
-        student_id: session.student_id,
-        project_name: session.project_name,
-        exam_set: currentSetName,
-        score,
-        hints_used: hintsUsed,
-        student_answers: studentAnswers
-      }])
-      if (error) throw error
-    } catch (err: any) {
-      alert('ส่งข้อมูลไม่สำเร็จ กรุณาแจ้งอาจารย์ผู้สอน\n' + err.message)
+      studentAnswers.push(input?.value || '')
     }
 
-    setFinalScore(score)
+    // ตรวจคำตอบ + คำนวณคะแนนฝั่ง server เสมอ (submitExam) — client ส่งได้แค่คำตอบดิบ
+    const result = await submitExam({
+      exam_set: currentSetName,
+      hints_used: hintsUsed,
+      student_answers: studentAnswers,
+    })
+
+    if (!result.success) {
+      alert('ส่งข้อมูลไม่สำเร็จ กรุณาแจ้งอาจารย์ผู้สอน\n' + result.error)
+      setIsSubmitting(false)
+      return
+    }
+
+    setFinalScore(result.score)
     setShowSuccessModal(true)
     setIsSubmitting(false)
   }
 
-  function logoutAndExit() {
-    sessionStorage.removeItem('activeExamSession')
+  async function logoutAndExit() {
+    await clearExamSession()
     router.push('/')
   }
 

@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import type { ActiveExamSession } from '@/types/exam'
+import { startExamSession, startReviewSession } from '@/app/actions/session'
 
 type Role = 'student' | 'teacher'
 type StudentStep = 'id' | 'subject' | 'pin'
@@ -125,19 +125,12 @@ export default function LoginPage() {
 
     if (status === 'closed-review') {
       setSubjectMessage({ text: `ห้องสอบวิชา ${subject.name} ปิดแล้ว กำลังพาไปโหมดทบทวนเฉลย...`, tone: 'info' })
-      const activeSession: ActiveExamSession = {
-        student_id: studentData.student_id,
-        full_name: `${studentData.first_name} ${studentData.last_name}`,
-        room: studentData.room,
-        class_number: studentData.class_number,
-        project_name: subject.name,
-        super_tokens: studentData.super_tokens || 0,
-        mode: 'review',
-        got_gacha: false,
-        gacha_amount: 0,
-      }
-      setTimeout(() => {
-        sessionStorage.setItem('activeExamSession', JSON.stringify(activeSession))
+      setTimeout(async () => {
+        const result = await startReviewSession(studentData.student_id, subject.name)
+        if (!result.success) {
+          setSubjectMessage({ text: result.error, tone: 'warning' })
+          return
+        }
         router.push('/exam')
       }, 700)
       return
@@ -154,38 +147,13 @@ export default function LoginPage() {
     if (!/^\d{6}$/.test(pin)) return setPinError('กรุณากรอกรหัส PIN 6 หลัก')
 
     setIsEnteringExam(true)
-    try {
-      const { data: sessionData, error: sessionError } = await supabase
-        .from('exam_sessions').select('*')
-        .eq('project_name', selectedSubject.name).eq('pin_code', pin).eq('is_active', true).single()
-      if (sessionError || !sessionData) throw new Error('รหัส PIN ไม่ถูกต้อง หรือห้องสอบวิชานี้ถูกปิดไปแล้ว')
-
-      const { data: resultData } = await supabase
-        .from('exam_results').select('id')
-        .eq('student_id', studentData.student_id).eq('project_name', selectedSubject.name)
-      if (resultData && resultData.length > 0) {
-        throw new Error('คุณได้ส่งข้อสอบแล้ว (จะดูเฉลยได้เมื่ออาจารย์ปิดห้องสอบเท่านั้น)')
-      }
-
-      const activeSession: ActiveExamSession = {
-        student_id: studentData.student_id,
-        full_name: `${studentData.first_name} ${studentData.last_name}`,
-        room: studentData.room,
-        class_number: studentData.class_number,
-        project_name: selectedSubject.name,
-        pin_code: pin,
-        mode: 'exam',
-        super_tokens: studentData.super_tokens || 0,
-        got_gacha: false,
-        gacha_amount: 0,
-      }
-      sessionStorage.setItem('activeExamSession', JSON.stringify(activeSession))
+    const result = await startExamSession(studentData.student_id, pin)
+    if (result.success) {
       router.push('/exam')
-    } catch (err: any) {
-      setPinError(err.message)
-    } finally {
-      setIsEnteringExam(false)
+    } else {
+      setPinError(result.error)
     }
+    setIsEnteringExam(false)
   }
 
   function goBackToId() {

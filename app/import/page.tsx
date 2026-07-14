@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { saveExamQuestions, deleteExamQuestionSet, deleteSubject } from '@/app/actions/import'
 
 const ADMIN_PIN = '123456'
 
@@ -67,6 +68,7 @@ export default function ImportPage() {
   const [existingSets, setExistingSets] = useState<ExistingSetRow[]>([])
   const [isLoadingExisting, setIsLoadingExisting] = useState(false)
   const [deletingKey, setDeletingKey] = useState<string | null>(null)
+  const [deletingSubject, setDeletingSubject] = useState<string | null>(null)
 
   useEffect(() => {
     if (isLoggedIn) loadExisting()
@@ -156,54 +158,29 @@ export default function ImportPage() {
     if (!validation || !validation.valid) return
     setIsSaving(true)
     setSaveMessage(null)
-    try {
-      if (saveMode === 'replace') {
-        const { data: existingBefore } = await supabase.from('exam_questions')
-          .select('id').eq('project_name', validation.projectName)
-        if (existingBefore && existingBefore.length > 0) {
-          const { data: deleted, error: delErr } = await supabase.from('exam_questions')
-            .delete().eq('project_name', validation.projectName).select('id')
-          if (delErr) throw delErr
-          if (!deleted || deleted.length === 0) {
-            throw new Error('ลบข้อสอบเดิมไม่สำเร็จ (ไม่มีสิทธิ์ DELETE) กรุณาตรวจสอบ Row Level Security Policy ของตาราง exam_questions')
-          }
-        }
-      } else {
-        const setNames = validation.sets.map(s => s.setName)
-        const { data: existingBefore } = await supabase.from('exam_questions')
-          .select('id').eq('project_name', validation.projectName).in('set_name', setNames)
-        if (existingBefore && existingBefore.length > 0) {
-          const { data: deleted, error: delErr } = await supabase.from('exam_questions')
-            .delete().eq('project_name', validation.projectName).in('set_name', setNames).select('id')
-          if (delErr) throw delErr
-          if (!deleted || deleted.length === 0) {
-            throw new Error('ลบชุดข้อสอบเดิมไม่สำเร็จ (ไม่มีสิทธิ์ DELETE) กรุณาตรวจสอบ Row Level Security Policy ของตาราง exam_questions')
-          }
-        }
-      }
 
-      const rows = validation.sets.map(s => ({
-        project_name: validation.projectName,
-        set_name: s.setName,
-        question_order: 0,
-        type: 'fill',
-        question: s.title,
-        code: s.code,
-        answers: s.answers,
-      }))
+    const setNames = validation.sets.map(s => s.setName)
+    const rows = validation.sets.map(s => ({
+      project_name: validation.projectName,
+      set_name: s.setName,
+      question_order: 0,
+      type: 'fill',
+      question: s.title,
+      code: s.code,
+      answers: s.answers,
+    }))
 
-      const { error: insertErr } = await supabase.from('exam_questions').insert(rows)
-      if (insertErr) throw insertErr
+    const result = await saveExamQuestions(validation.projectName, setNames, saveMode, rows)
 
-      setSaveMessage({ text: `บันทึกสำเร็จ ${rows.length} ชุด สำหรับวิชา "${validation.projectName}"`, ok: true })
+    if (result.success) {
+      setSaveMessage({ text: `บันทึกสำเร็จ ${result.savedCount} ชุด สำหรับวิชา "${validation.projectName}"`, ok: true })
       setJsonInput('')
       setValidation(null)
       loadExisting()
-    } catch (err: any) {
-      setSaveMessage({ text: 'บันทึกไม่สำเร็จ: ' + err.message, ok: false })
-    } finally {
-      setIsSaving(false)
+    } else {
+      setSaveMessage({ text: 'บันทึกไม่สำเร็จ: ' + result.error, ok: false })
     }
+    setIsSaving(false)
   }
 
   // ── ลบชุดข้อสอบ ───────────────────────────────────────────
@@ -224,18 +201,42 @@ export default function ImportPage() {
         return
       }
 
-      const { data: deleted, error } = await supabase.from('exam_questions')
-        .delete().eq('project_name', projectName).eq('set_name', setName).select('id')
-      if (error) throw error
-      if (!deleted || deleted.length === 0) {
-        throw new Error('ไม่มีสิทธิ์ลบข้อมูล (RLS) กรุณาตรวจสอบ Row Level Security Policy ของตาราง exam_questions ใน Supabase ว่าอนุญาตให้ DELETE ด้วย anon key หรือไม่')
-      }
+      const result = await deleteExamQuestionSet(projectName, setName)
+      if (!result.success) throw new Error(result.error)
 
       await loadExisting()
     } catch (err: any) {
       alert('ลบไม่สำเร็จ: ' + err.message)
     } finally {
       setDeletingKey(null)
+    }
+  }
+
+  // ── ลบทั้งวิชา ──────────────────────────────────────────────
+  async function handleDeleteSubject(subjectName: string) {
+    setDeletingSubject(subjectName)
+    try {
+      const { count } = await supabase.from('exam_results')
+        .select('id', { count: 'exact', head: true }).eq('project_name', subjectName)
+
+      const setCount = existingSets.filter(s => s.project_name === subjectName).length
+      const warning = count && count > 0
+        ? `\n\n⚠️ มีนักศึกษาส่งข้อสอบวิชานี้ไปแล้ว ${count} คน โหมดทบทวนเฉลยของพวกเขาจะใช้งานไม่ได้ทันทีถ้าลบ`
+        : ''
+
+      if (!confirm(`ยืนยันลบวิชา "${subjectName}" ทั้งหมด?\n\nจะลบข้อสอบทุกชุด (${setCount} ชุด) และเอาวิชานี้ออกจากตัวเลือกที่นักศึกษาเลือกได้ทันที${warning}`)) {
+        setDeletingSubject(null)
+        return
+      }
+
+      const result = await deleteSubject(subjectName)
+      if (!result.success) throw new Error(result.error)
+
+      await loadExisting()
+    } catch (err: any) {
+      alert('ลบวิชาไม่สำเร็จ: ' + err.message)
+    } finally {
+      setDeletingSubject(null)
     }
   }
 
@@ -390,11 +391,21 @@ export default function ImportPage() {
                 <div key={group.projectName}>
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-sm font-medium text-gray-900">{group.projectName}</span>
-                    {group.sets.length === 0 ? (
-                      <span className="text-xs text-orange-700 bg-orange-50 px-2.5 py-1 rounded-full">ยังไม่มีข้อสอบ</span>
-                    ) : (
-                      <span className="text-xs text-green-700 bg-green-50 px-2.5 py-1 rounded-full">{group.sets.length} ชุด</span>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {group.sets.length === 0 ? (
+                        <span className="text-xs text-orange-700 bg-orange-50 px-2.5 py-1 rounded-full">ยังไม่มีข้อสอบ</span>
+                      ) : (
+                        <span className="text-xs text-green-700 bg-green-50 px-2.5 py-1 rounded-full">{group.sets.length} ชุด</span>
+                      )}
+                      <button
+                        onClick={() => handleDeleteSubject(group.projectName)}
+                        disabled={deletingSubject === group.projectName}
+                        title="ลบวิชานี้ทั้งหมด (ข้อสอบทุกชุด + เอาวิชาออกจากระบบ)"
+                        className="px-2.5 py-1.5 bg-red-50 hover:bg-red-100 disabled:opacity-60 border border-red-200 text-red-500 rounded-lg transition active:scale-95 text-xs shrink-0"
+                      >
+                        {deletingSubject === group.projectName ? '⏳' : '🗑️ ลบวิชา'}
+                      </button>
+                    </div>
                   </div>
                   {group.sets.length > 0 && (
                     <div className="space-y-1.5">

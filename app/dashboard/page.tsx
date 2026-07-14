@@ -2,6 +2,15 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import {
+  generatePin as generatePinAction,
+  closeSession as closeSessionAction,
+  resetRoomTokens as resetRoomTokensAction,
+  giveTokenToStudent as giveTokenToStudentAction,
+  removeTokenFromStudent as removeTokenFromStudentAction,
+  distributeSuperTokens as distributeSuperTokensAction,
+  deleteExamResult as deleteExamResultAction,
+} from '@/app/actions/dashboard'
 
 const ADMIN_PIN = '123456'
 
@@ -42,6 +51,7 @@ export default function DashboardPage() {
   const [currentPin, setCurrentPin] = useState('')
   const [generatingPin, setGeneratingPin] = useState(false)
   const [isDistributing, setIsDistributing] = useState(false)
+  const [gachaWinners, setGachaWinners] = useState<string[]>([])
 
   // ── Table data ───────────────────────────────────────────
   const [globalExamData, setGlobalExamData] = useState<ExamRow[]>([])
@@ -116,6 +126,20 @@ export default function DashboardPage() {
     fetchExamResults(projectFilter)
   }, [isLoggedIn, projectFilter])
 
+  // ── รายชื่อคนที่เคยถูกสุ่มได้ Super Token แล้วในห้องสอบรอบนี้ ──
+  // เก็บแยกตามวิชา+PIN เพื่อไม่ให้คนเดิมถูกสุ่มซ้ำในรอบเดียวกัน (เพิ่มโอกาสให้คนที่ยังไม่เคยได้)
+  // เปิด PIN ใหม่ = รอบใหม่ = รีเซ็ตรายชื่อ เพราะ key เปลี่ยน
+  const gachaWinnersKey = `gacha-winners:${projectFilter}:${currentPin}`
+  useEffect(() => {
+    if (!currentPin) { setGachaWinners([]); return }
+    try {
+      const stored = sessionStorage.getItem(gachaWinnersKey)
+      setGachaWinners(stored ? JSON.parse(stored) : [])
+    } catch {
+      setGachaWinners([])
+    }
+  }, [gachaWinnersKey])
+
   // ── Realtime: refresh table on new submissions ─────────
   useEffect(() => {
     if (!realtimeOn) return
@@ -141,39 +165,24 @@ export default function DashboardPage() {
   // ── PIN management ──────────────────────────────────────
   async function generatePin() {
     setGeneratingPin(true)
-    try {
-      const pin = Math.floor(100000 + Math.random() * 900000).toString()
-
-      // ปิด session เก่าที่ยัง active ของวิชานี้ทั้งหมดก่อน (กันมี is_active=true ซ้อนกันหลายแถว)
-      const { error: closeErr } = await supabase.from('exam_sessions')
-        .update({ is_active: false }).eq('project_name', projectFilter).eq('is_active', true)
-      if (closeErr) throw closeErr
-
-      // exam_sessions ไม่มี unique constraint บน project_name จึงต้อง insert ไม่ใช่ upsert
-      const { error: insertErr } = await supabase.from('exam_sessions')
-        .insert([{ project_name: projectFilter, pin_code: pin, is_active: true }])
-      if (insertErr) throw insertErr
-
+    const result = await generatePinAction(projectFilter)
+    if (result.success) {
       setPinActive(true)
-      setCurrentPin(pin)
-    } catch (err: any) {
-      alert('สร้าง PIN ไม่สำเร็จ: ' + err.message)
-    } finally {
-      setGeneratingPin(false)
+      setCurrentPin(result.pin)
+    } else {
+      alert('สร้าง PIN ไม่สำเร็จ: ' + result.error)
     }
+    setGeneratingPin(false)
   }
 
   async function closeSession() {
     if (!confirm('ยืนยันปิดห้องสอบวิชานี้?\nนักศึกษาจะเข้าสอบใหม่ไม่ได้ (เข้าได้แค่โหมดทบทวนเฉลยเท่านั้น)')) return
-    try {
-      const { error } = await supabase.from('exam_sessions')
-        .update({ is_active: false }).eq('project_name', projectFilter).eq('is_active', true)
-      if (error) throw error
-
+    const result = await closeSessionAction(projectFilter)
+    if (result.success) {
       setPinActive(false)
       setCurrentPin('')
-    } catch (err: any) {
-      alert('ปิดห้องสอบไม่สำเร็จ: ' + err.message)
+    } else {
+      alert('ปิดห้องสอบไม่สำเร็จ: ' + result.error)
     }
   }
 
@@ -186,82 +195,41 @@ export default function DashboardPage() {
     }
     if (!confirm(`ยืนยันรีเซ็ต Super Token ของนักศึกษาห้อง ${currentRoom} ทุกคนเป็น 0?`)) return
     setIsResettingRoom(true)
-    try {
-      const { error } = await supabase.from('students')
-        .update({ super_tokens: 0 }).eq('room', currentRoom).gt('super_tokens', 0)
-      if (error) throw error
+    const result = await resetRoomTokensAction(currentRoom)
+    if (result.success) {
       alert(`รีเซ็ต Super Token ห้อง ${currentRoom} เรียบร้อยแล้ว`)
-    } catch (err: any) {
-      alert('รีเซ็ต Token ไม่สำเร็จ: ' + err.message)
-    } finally {
-      setIsResettingRoom(false)
+    } else {
+      alert('รีเซ็ต Token ไม่สำเร็จ: ' + result.error)
     }
+    setIsResettingRoom(false)
   }
 
   // ── Gacha: random distribute super tokens ───────────────
   async function distributeSuperTokens() {
-    try {
-      const { data: session, error: sessionErr } = await supabase.from('exam_sessions')
-        .select('*').eq('project_name', projectFilter).eq('is_active', true).single()
-      if (!session || sessionErr) {
-        return alert('❌ ไม่สามารถแจกได้: ยังไม่มีการเปิดห้องสอบสำหรับวิชานี้ หรือห้องสอบถูกปิดไปแล้ว')
-      }
+    const countStr = prompt('🎁 ระบบสุ่มแจก Super Token 🎁\nกรุณาระบุจำนวนนักศึกษาที่ต้องการแจก (ระบบจะสุ่มให้เฉพาะคนที่ยังสอบไม่เสร็จ):')
+    if (!countStr) return
+    const count = parseInt(countStr)
+    if (isNaN(count) || count <= 0) return alert('โปรดระบุจำนวนคนเป็นตัวเลขที่ถูกต้อง')
 
-      const countStr = prompt('🎁 ระบบสุ่มแจก Super Token 🎁\nกรุณาระบุจำนวนนักศึกษาที่ต้องการแจก (ระบบจะสุ่มให้เฉพาะคนที่ยังสอบไม่เสร็จ):')
-      if (!countStr) return
-      const count = parseInt(countStr)
-      if (isNaN(count) || count <= 0) return alert('โปรดระบุจำนวนคนเป็นตัวเลขที่ถูกต้อง')
+    setIsDistributing(true)
+    const result = await distributeSuperTokensAction(projectFilter, currentRoom, count, gachaWinners)
+    setIsDistributing(false)
 
-      let eligible = globalExamData.filter(s => !s.has_submitted)
-      if (currentRoom !== 'ALL') eligible = eligible.filter(s => s.room === currentRoom)
-      if (eligible.length === 0) return alert('❌ ไม่มีนักศึกษาที่กำลังทำข้อสอบอยู่ในขณะนี้ หรือทุกคนส่งข้อสอบหมดแล้ว')
+    if (!result.success) {
+      alert('❌ ' + result.error)
+      return
+    }
 
-      const actualCount = Math.min(count, eligible.length)
-      const shuffled = [...eligible].sort(() => 0.5 - Math.random())
-      const selected = shuffled.slice(0, actualCount)
+    if (result.selectedIds.length > 0) {
+      const updated = [...gachaWinners, ...result.selectedIds]
+      setGachaWinners(updated)
+      sessionStorage.setItem(gachaWinnersKey, JSON.stringify(updated))
+    }
 
-      setIsDistributing(true)
-
-      // แยก channel นี้จาก postgres_changes เพื่อไม่ให้การแจกรายคนไปโชว์ป๊อปอัพ Mystery Drop ผิด ๆ
-      const gachaChannel = supabase.channel('gacha-broadcast')
-      await gachaChannel.subscribe()
-
-      let successCount = 0
-      let blockedCount = 0
-
-      for (const student of selected) {
-        const { data: st } = await supabase.from('students')
-          .select('super_tokens').eq('student_id', student.student_id).single()
-        let tokens = st ? (st.super_tokens || 0) : 0
-
-        if (tokens < 3) {
-          tokens += 1
-          const { data: updateData, error: updateErr } = await supabase.from('students')
-            .update({ super_tokens: tokens }).eq('student_id', student.student_id).select()
-          if (!updateErr && updateData && updateData.length > 0) {
-            successCount++
-            gachaChannel.send({
-              type: 'broadcast',
-              event: 'gacha_drop',
-              payload: { student_id: student.student_id, amount: 1 },
-            })
-          } else {
-            blockedCount++
-          }
-        }
-      }
-
-      supabase.removeChannel(gachaChannel)
-      setIsDistributing(false)
-
-      if (blockedCount > 0) {
-        alert(`⚠️ แจกสำเร็จ ${successCount} คน แต่อีก ${blockedCount} คน เขียนข้อมูลไม่ผ่าน (น่าจะติด RLS Policy ของตาราง students ใน Supabase กรุณาตรวจสอบ)`)
-      } else {
-        alert(`🎉 สุ่มแจกสำเร็จ!\nนักศึกษาผู้โชคดี ${successCount} คน ได้รับ Super Token เพิ่มเรียบร้อยแล้ว (จะเด้งขึ้นหน้าจอของเด็กทันที)`)
-      }
-    } catch (err: any) {
-      setIsDistributing(false)
-      alert(`เกิดข้อผิดพลาด: ${err.message}`)
+    if (result.blockedCount > 0) {
+      alert(`⚠️ แจกสำเร็จ ${result.successCount} คน แต่อีก ${result.blockedCount} คน เขียนข้อมูลไม่ผ่าน`)
+    } else {
+      alert(`🎉 สุ่มแจกสำเร็จ!\nนักศึกษาผู้โชคดี ${result.successCount} คน ได้รับ Super Token เพิ่มเรียบร้อยแล้ว (จะเด้งขึ้นหน้าจอของเด็กทันที)\nรอบถัดไปจะไม่สุ่มโดนคนกลุ่มนี้ซ้ำครับ`)
     }
   }
 
@@ -309,65 +277,34 @@ export default function DashboardPage() {
 
   async function giveTokenToStudent(studentId: string) {
     setTokenBusyId(studentId)
-    try {
-      const { data: st, error: fetchErr } = await supabase.from('students')
-        .select('super_tokens').eq('student_id', studentId).single()
-      if (fetchErr) throw fetchErr
-      let tokens = st ? (st.super_tokens || 0) : 0
-      if (tokens >= 3) return
-
-      tokens += 1 // ให้ทีละ 1 เหรียญ (ตันที่ 3)
-      const { data: updateData, error: updateErr } = await supabase.from('students')
-        .update({ super_tokens: tokens }).eq('student_id', studentId).select()
-      if (updateErr) throw updateErr
-      if (!updateData || updateData.length === 0) {
-        throw new Error('ไม่มีสิทธิ์เขียนข้อมูล (RLS) กรุณาตรวจสอบ Row Level Security Policy ของตาราง students ใน Supabase ว่าอนุญาตให้ UPDATE ด้วย anon key หรือไม่')
-      }
-      setGiveTokenList(list => list?.map(s => s.student_id === studentId ? { ...s, tokens } : s) ?? list)
-    } catch (err: any) {
-      alert('ให้เหรียญไม่สำเร็จ: ' + err.message)
-    } finally {
-      setTokenBusyId(null)
+    const result = await giveTokenToStudentAction(studentId)
+    if (result.success) {
+      setGiveTokenList(list => list?.map(s => s.student_id === studentId ? { ...s, tokens: result.tokens } : s) ?? list)
+    } else {
+      alert('ให้เหรียญไม่สำเร็จ: ' + result.error)
     }
+    setTokenBusyId(null)
   }
 
   async function removeTokenFromStudent(studentId: string) {
     setTokenBusyId(studentId)
-    try {
-      const { data: st, error: fetchErr } = await supabase.from('students')
-        .select('super_tokens').eq('student_id', studentId).single()
-      if (fetchErr) throw fetchErr
-      let tokens = st ? (st.super_tokens || 0) : 0
-      if (tokens <= 0) return
-
-      tokens -= 1
-      const { data: updateData, error: updateErr } = await supabase.from('students')
-        .update({ super_tokens: tokens }).eq('student_id', studentId).select()
-      if (updateErr) throw updateErr
-      if (!updateData || updateData.length === 0) {
-        throw new Error('ไม่มีสิทธิ์เขียนข้อมูล (RLS) กรุณาตรวจสอบ Row Level Security Policy ของตาราง students ใน Supabase ว่าอนุญาตให้ UPDATE ด้วย anon key หรือไม่')
-      }
-      setGiveTokenList(list => list?.map(s => s.student_id === studentId ? { ...s, tokens } : s) ?? list)
-    } catch (err: any) {
-      alert('หักเหรียญไม่สำเร็จ: ' + err.message)
-    } finally {
-      setTokenBusyId(null)
+    const result = await removeTokenFromStudentAction(studentId)
+    if (result.success) {
+      setGiveTokenList(list => list?.map(s => s.student_id === studentId ? { ...s, tokens: result.tokens } : s) ?? list)
+    } else {
+      alert('หักเหรียญไม่สำเร็จ: ' + result.error)
     }
+    setTokenBusyId(null)
   }
 
   // ── Delete result ────────────────────────────────────────
   async function deleteExamResult(studentId: string, fullName: string) {
     if (!confirm(`ยืนยันลบผลสอบของ "${fullName}" สำหรับวิชานี้?\n\n⚠️ คะแนนและคำตอบเดิมจะถูกลบทิ้งอย่างถาวร นักศึกษาจะสามารถเข้าสอบวิชานี้ใหม่ได้อีกครั้ง`)) return
-    try {
-      const { data: deleteData, error } = await supabase.from('exam_results')
-        .delete().eq('student_id', studentId).eq('project_name', projectFilter).select()
-      if (error) throw error
-      if (!deleteData || deleteData.length === 0) {
-        throw new Error('ไม่มีสิทธิ์ลบข้อมูล (RLS) กรุณาตรวจสอบ Row Level Security Policy ของตาราง exam_results ใน Supabase ว่าอนุญาตให้ DELETE ด้วย anon key หรือไม่')
-      }
+    const result = await deleteExamResultAction(studentId, projectFilter)
+    if (result.success) {
       fetchExamResults(projectFilter)
-    } catch (err: any) {
-      alert('ลบผลสอบไม่สำเร็จ: ' + err.message)
+    } else {
+      alert('ลบผลสอบไม่สำเร็จ: ' + result.error)
     }
   }
 
@@ -408,7 +345,7 @@ export default function DashboardPage() {
     })
   }, [globalExamData, currentRoom, sortMode])
 
-  const metrics = useMemo(() => {
+  const metrics = useMemo(() => { 
     const total = filteredData.length
     const submitted = filteredData.filter(i => i.has_submitted)
     const submittedCount = submitted.length
