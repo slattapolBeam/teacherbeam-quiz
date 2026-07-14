@@ -11,8 +11,7 @@ import {
   distributeSuperTokens as distributeSuperTokensAction,
   deleteExamResult as deleteExamResultAction,
 } from '@/app/actions/dashboard'
-
-const ADMIN_PIN = '123456'
+import { signOutTeacher } from '@/app/actions/auth'
 
 const PROJECTS = [
   { value: 'ExpenseNote', label: 'ExpenseNote (Kotlin)' },
@@ -34,11 +33,6 @@ type GiveTokenRow = ExamRow & { tokens: number }
 
 export default function DashboardPage() {
   const supabase = createClient()
-
-  // ── Auth gate ────────────────────────────────────────
-  const [isLoggedIn, setIsLoggedIn] = useState(false)
-  const [passwordInput, setPasswordInput] = useState('')
-  const [loginError, setLoginError] = useState(false)
 
   // ── Project / room controls ────────────────────────────
   const [projectFilter, setProjectFilter] = useState(PROJECTS[0].value)
@@ -121,10 +115,9 @@ export default function DashboardPage() {
   }
 
   useEffect(() => {
-    if (!isLoggedIn) return
     checkSessionStatus(projectFilter)
     fetchExamResults(projectFilter)
-  }, [isLoggedIn, projectFilter])
+  }, [projectFilter])
 
   // ── รายชื่อคนที่เคยถูกสุ่มได้ Super Token แล้วในห้องสอบรอบนี้ ──
   // เก็บแยกตามวิชา+PIN เพื่อไม่ให้คนเดิมถูกสุ่มซ้ำในรอบเดียวกัน (เพิ่มโอกาสให้คนที่ยังไม่เคยได้)
@@ -149,18 +142,6 @@ export default function DashboardPage() {
       }).subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [realtimeOn, projectFilter])
-
-  // ── Login ────────────────────────────────────────────────
-  function handleLogin(e: React.FormEvent) {
-    e.preventDefault()
-    if (passwordInput === ADMIN_PIN) {
-      setIsLoggedIn(true)
-      setLoginError(false)
-    } else {
-      setLoginError(true)
-      setPasswordInput('')
-    }
-  }
 
   // ── PIN management ──────────────────────────────────────
   async function generatePin() {
@@ -358,42 +339,6 @@ export default function DashboardPage() {
     return { total, submittedCount, avg, max, min }
   }, [filteredData])
 
-  // ── Render: login gate ─────────────────────────────────────
-  if (!isLoggedIn) {
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#F5F5F7]">
-        <div className="w-full max-w-md p-8 bg-white rounded-3xl shadow-xl border border-gray-100 mx-4">
-          <div className="text-center mb-8">
-            <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-50 rounded-2xl text-blue-600 mb-4 text-3xl">👨‍🏫</div>
-            <h1 className="text-2xl font-semibold tracking-tight text-gray-900">ศูนย์บัญชาการผู้สอน</h1>
-            <p className="text-sm text-gray-500 mt-2">กรุณากรอกรหัสผ่านเพื่อเข้าสู่ระบบ Dashboard</p>
-          </div>
-          <form onSubmit={handleLogin}>
-            <div className="mb-6">
-              <input
-                type="password"
-                value={passwordInput}
-                onChange={e => setPasswordInput(e.target.value)}
-                required
-                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition text-center tracking-widest text-lg"
-                placeholder="••••••••"
-              />
-              {loginError && (
-                <p className="text-red-500 text-xs mt-2 text-center">❌ รหัสผ่านไม่ถูกต้อง</p>
-              )}
-            </div>
-            <button
-              type="submit"
-              className="w-full py-3 bg-[#0071E3] hover:bg-[#0077ED] text-white font-medium rounded-xl transition shadow-md shadow-blue-500/10 active:scale-[0.98]"
-            >
-              เข้าสู่ระบบด่วน
-            </button>
-          </form>
-        </div>
-      </div>
-    )
-  }
-
   // ── Render: dashboard ────────────────────────────────────
   return (
     <div className="min-h-screen antialiased selection:bg-blue-500 selection:text-white bg-[#F5F5F7]">
@@ -436,6 +381,12 @@ export default function DashboardPage() {
               className="inline-flex items-center gap-2 px-4 py-2.5 bg-[#0071E3] hover:bg-[#0077ED] text-white font-medium rounded-xl transition active:scale-95 text-sm shadow-sm shadow-blue-500/10"
             >
               📥 ดาวน์โหลด CSV
+            </button>
+            <button
+              onClick={() => signOutTeacher()}
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-white border border-gray-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 text-gray-700 font-medium rounded-xl transition active:scale-95 text-sm shadow-sm"
+            >
+              🚪 ออกจากระบบ
             </button>
           </div>
         </header>

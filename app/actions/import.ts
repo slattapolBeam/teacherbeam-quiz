@@ -1,6 +1,7 @@
 'use server'
 
 import { createServiceClient } from '@/lib/supabase/server'
+import { requireTeacher } from '@/app/actions/auth'
 
 type ExamQuestionRow = {
   project_name: string
@@ -23,6 +24,7 @@ export async function saveExamQuestions(
 ): Promise<ActionResult<{ savedCount: number }>> {
   const supabase = createServiceClient()
   try {
+    await requireTeacher()
     if (mode === 'replace') {
       const { error: delErr } = await supabase.from('exam_questions')
         .delete().eq('project_name', projectName)
@@ -46,6 +48,7 @@ export async function saveExamQuestions(
 export async function deleteExamQuestionSet(projectName: string, setName: string): Promise<ActionResult> {
   const supabase = createServiceClient()
   try {
+    await requireTeacher()
     const { error } = await supabase.from('exam_questions')
       .delete().eq('project_name', projectName).eq('set_name', setName)
     if (error) throw error
@@ -60,6 +63,7 @@ export async function deleteExamQuestionSet(projectName: string, setName: string
 export async function deleteSubject(subjectName: string): Promise<ActionResult> {
   const supabase = createServiceClient()
   try {
+    await requireTeacher()
     const { error: delQuestionsErr } = await supabase.from('exam_questions')
       .delete().eq('project_name', subjectName)
     if (delQuestionsErr) throw delQuestionsErr

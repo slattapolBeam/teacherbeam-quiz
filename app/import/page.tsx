@@ -3,8 +3,7 @@
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { saveExamQuestions, deleteExamQuestionSet, deleteSubject } from '@/app/actions/import'
-
-const ADMIN_PIN = '123456'
+import { signOutTeacher } from '@/app/actions/auth'
 
 type ParsedSet = {
   setName: string
@@ -51,11 +50,6 @@ function buildCodeFromTemplate(template: string, answers: string[]): { code: str
 export default function ImportPage() {
   const supabase = createClient()
 
-  // ── Auth gate (ใช้รหัสเดียวกับ dashboard เพราะยังไม่มี auth จริงจนกว่าจะถึง Phase 6) ──
-  const [isLoggedIn, setIsLoggedIn] = useState(false)
-  const [passwordInput, setPasswordInput] = useState('')
-  const [loginError, setLoginError] = useState(false)
-
   // ── JSON input / validation ─────────────────────────────
   const [jsonInput, setJsonInput] = useState('')
   const [validation, setValidation] = useState<ValidationResult | null>(null)
@@ -71,8 +65,8 @@ export default function ImportPage() {
   const [deletingSubject, setDeletingSubject] = useState<string | null>(null)
 
   useEffect(() => {
-    if (isLoggedIn) loadExisting()
-  }, [isLoggedIn])
+    loadExisting()
+  }, [])
 
   async function loadExisting() {
     setIsLoadingExisting(true)
@@ -87,17 +81,6 @@ export default function ImportPage() {
       console.error('โหลดรายการข้อสอบที่มีอยู่ไม่สำเร็จ:', err)
     } finally {
       setIsLoadingExisting(false)
-    }
-  }
-
-  function handleLogin(e: React.FormEvent) {
-    e.preventDefault()
-    if (passwordInput === ADMIN_PIN) {
-      setIsLoggedIn(true)
-      setLoginError(false)
-    } else {
-      setLoginError(true)
-      setPasswordInput('')
     }
   }
 
@@ -245,49 +228,21 @@ export default function ImportPage() {
     sets: existingSets.filter(s => s.project_name === name),
   }))
 
-  // ── Render: login gate ─────────────────────────────────────
-  if (!isLoggedIn) {
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#F5F5F7]">
-        <div className="w-full max-w-md p-8 bg-white rounded-3xl shadow-xl border border-gray-100 mx-4">
-          <div className="text-center mb-8">
-            <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-50 rounded-2xl text-blue-600 mb-4 text-3xl">📥</div>
-            <h1 className="text-2xl font-semibold tracking-tight text-gray-900">นำเข้าข้อสอบ</h1>
-            <p className="text-sm text-gray-500 mt-2">กรุณากรอกรหัสผ่านเพื่อเข้าสู่ระบบ</p>
-          </div>
-          <form onSubmit={handleLogin}>
-            <div className="mb-6">
-              <input
-                type="password"
-                value={passwordInput}
-                onChange={e => setPasswordInput(e.target.value)}
-                required
-                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition text-center tracking-widest text-lg"
-                placeholder="••••••••"
-              />
-              {loginError && (
-                <p className="text-red-500 text-xs mt-2 text-center">❌ รหัสผ่านไม่ถูกต้อง</p>
-              )}
-            </div>
-            <button
-              type="submit"
-              className="w-full py-3 bg-[#0071E3] hover:bg-[#0077ED] text-white font-medium rounded-xl transition shadow-md shadow-blue-500/10 active:scale-[0.98]"
-            >
-              เข้าสู่ระบบด่วน
-            </button>
-          </form>
-        </div>
-      </div>
-    )
-  }
-
   // ── Render: main ────────────────────────────────────────
   return (
     <div className="min-h-screen bg-[#F5F5F7] py-10 px-4">
       <div className="max-w-2xl mx-auto">
-        <div className="mb-6">
-          <h1 className="text-2xl font-semibold text-gray-900">📥 นำเข้าข้อสอบ (JSON Import)</h1>
-          <p className="text-sm text-gray-500 mt-1">วาง JSON ที่ได้จาก Claude แล้วตรวจสอบก่อนบันทึกลงระบบ</p>
+        <div className="mb-6 flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold text-gray-900">📥 นำเข้าข้อสอบ (JSON Import)</h1>
+            <p className="text-sm text-gray-500 mt-1">วาง JSON ที่ได้จาก Claude แล้วตรวจสอบก่อนบันทึกลงระบบ</p>
+          </div>
+          <button
+            onClick={() => signOutTeacher()}
+            className="shrink-0 inline-flex items-center gap-2 px-4 py-2.5 bg-white border border-gray-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 text-gray-700 font-medium rounded-xl transition active:scale-95 text-sm shadow-sm"
+          >
+            🚪 ออกจากระบบ
+          </button>
         </div>
 
         <div className="bg-white rounded-3xl border border-gray-200 p-6 mb-4">

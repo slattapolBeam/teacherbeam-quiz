@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { startExamSession, startReviewSession } from '@/app/actions/session'
+import { signInTeacher } from '@/app/actions/auth'
 
 type Role = 'student' | 'teacher'
 type StudentStep = 'id' | 'subject' | 'pin'
@@ -36,6 +37,12 @@ export default function LoginPage() {
   const [pin, setPin] = useState('')
   const [pinError, setPinError] = useState('')
   const [isEnteringExam, setIsEnteringExam] = useState(false)
+
+  // ── Teacher login ──────────────────────────────────────
+  const [teacherEmail, setTeacherEmail] = useState('')
+  const [teacherPassword, setTeacherPassword] = useState('')
+  const [teacherError, setTeacherError] = useState('')
+  const [isSigningIn, setIsSigningIn] = useState(false)
 
   // Token check modal (unchanged feature from baseline)
   const [showTokenModal, setShowTokenModal] = useState(false)
@@ -156,6 +163,20 @@ export default function LoginPage() {
     setIsEnteringExam(false)
   }
 
+  // ── Teacher login ──────────────────────────────────────
+  async function handleTeacherLogin(e: React.FormEvent) {
+    e.preventDefault()
+    setTeacherError('')
+    setIsSigningIn(true)
+    const result = await signInTeacher(teacherEmail, teacherPassword)
+    if (result.success) {
+      router.push('/dashboard')
+    } else {
+      setTeacherError(result.error)
+    }
+    setIsSigningIn(false)
+  }
+
   function goBackToId() {
     setStep('id')
     setSubjects([])
@@ -228,16 +249,44 @@ export default function LoginPage() {
 
         <div key={role} className="role-switch-enter">
         {role === 'teacher' ? (
-          <div className="text-center py-2">
-            <div className="inline-flex items-center justify-center w-12 h-12 bg-gray-100 rounded-2xl text-2xl mb-4">🧑‍🏫</div>
-            <p className="text-sm text-gray-500 mb-6 leading-relaxed">ระบบจะพาไปหน้า Dashboard สำหรับจัดการห้องสอบและดูคะแนน</p>
+          <form onSubmit={handleTeacherLogin} className="py-2">
+            <div className="text-center mb-6">
+              <div className="inline-flex items-center justify-center w-12 h-12 bg-gray-100 rounded-2xl text-2xl mb-4">🧑‍🏫</div>
+              <p className="text-sm text-gray-500 leading-relaxed">เข้าสู่ระบบด้วยบัญชีอาจารย์</p>
+            </div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 ml-1">อีเมล</label>
+            <input
+              type="email"
+              value={teacherEmail}
+              onChange={e => setTeacherEmail(e.target.value)}
+              required
+              autoComplete="email"
+              className="w-full px-5 py-4 bg-white rounded-2xl border border-gray-200 focus:outline-none focus:border-blue-500 transition text-sm mb-4"
+              placeholder="teacher@example.com"
+            />
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 ml-1">รหัสผ่าน</label>
+            <input
+              type="password"
+              value={teacherPassword}
+              onChange={e => setTeacherPassword(e.target.value)}
+              required
+              autoComplete="current-password"
+              className="w-full px-5 py-4 bg-white rounded-2xl border border-gray-200 focus:outline-none focus:border-blue-500 transition text-sm mb-4"
+              placeholder="••••••••"
+            />
+            {teacherError && (
+              <div className="mb-4 p-3 bg-red-50 text-red-600 text-sm font-medium rounded-xl border border-red-100 text-center">
+                {teacherError}
+              </div>
+            )}
             <button
-              onClick={() => router.push('/dashboard')}
-              className="w-full py-4 bg-[#0071E3] hover:bg-[#0077ED] text-white font-semibold rounded-2xl transition duration-200 shadow-lg shadow-blue-500/25 active:scale-[0.98]"
+              type="submit"
+              disabled={isSigningIn}
+              className="w-full py-4 bg-[#0071E3] hover:bg-[#0077ED] text-white font-semibold rounded-2xl transition duration-200 shadow-lg shadow-blue-500/25 active:scale-[0.98] disabled:opacity-60"
             >
-              ไปที่ Dashboard →
+              {isSigningIn ? 'กำลังเข้าสู่ระบบ...' : 'เข้าสู่ระบบ →'}
             </button>
-          </div>
+          </form>
         ) : (
           <>
             <div className="flex justify-center gap-1.5 mb-6">

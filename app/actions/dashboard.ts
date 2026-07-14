@@ -1,6 +1,7 @@
 'use server'
 
 import { createServiceClient } from '@/lib/supabase/server'
+import { requireTeacher } from '@/app/actions/auth'
 
 type ActionResult<T extends object = {}> = ({ success: true } & T) | { success: false; error: string }
 
@@ -8,6 +9,7 @@ type ActionResult<T extends object = {}> = ({ success: true } & T) | { success: 
 export async function generatePin(projectName: string): Promise<ActionResult<{ pin: string }>> {
   const supabase = createServiceClient()
   try {
+    await requireTeacher()
     const pin = Math.floor(100000 + Math.random() * 900000).toString()
 
     // ปิด session เก่าที่ยัง active ของวิชานี้ทั้งหมดก่อน (กันมี is_active=true ซ้อนกันหลายแถว)
@@ -29,6 +31,7 @@ export async function generatePin(projectName: string): Promise<ActionResult<{ p
 export async function closeSession(projectName: string): Promise<ActionResult> {
   const supabase = createServiceClient()
   try {
+    await requireTeacher()
     const { error } = await supabase.from('exam_sessions')
       .update({ is_active: false }).eq('project_name', projectName).eq('is_active', true)
     if (error) throw error
@@ -42,6 +45,7 @@ export async function closeSession(projectName: string): Promise<ActionResult> {
 export async function resetRoomTokens(room: string): Promise<ActionResult> {
   const supabase = createServiceClient()
   try {
+    await requireTeacher()
     const { error } = await supabase.from('students')
       .update({ super_tokens: 0 }).eq('room', room).gt('super_tokens', 0)
     if (error) throw error
@@ -55,6 +59,7 @@ export async function resetRoomTokens(room: string): Promise<ActionResult> {
 export async function giveTokenToStudent(studentId: string): Promise<ActionResult<{ tokens: number }>> {
   const supabase = createServiceClient()
   try {
+    await requireTeacher()
     const { data: st, error: fetchErr } = await supabase.from('students')
       .select('super_tokens').eq('student_id', studentId).single()
     if (fetchErr) throw fetchErr
@@ -75,6 +80,7 @@ export async function giveTokenToStudent(studentId: string): Promise<ActionResul
 export async function removeTokenFromStudent(studentId: string): Promise<ActionResult<{ tokens: number }>> {
   const supabase = createServiceClient()
   try {
+    await requireTeacher()
     const { data: st, error: fetchErr } = await supabase.from('students')
       .select('super_tokens').eq('student_id', studentId).single()
     if (fetchErr) throw fetchErr
@@ -101,6 +107,7 @@ export async function distributeSuperTokens(
 ): Promise<ActionResult<{ successCount: number; blockedCount: number; selectedIds: string[] }>> {
   const supabase = createServiceClient()
   try {
+    await requireTeacher()
     const { data: session, error: sessionErr } = await supabase.from('exam_sessions')
       .select('*').eq('project_name', projectName).eq('is_active', true).single()
     if (!session || sessionErr) {
@@ -164,6 +171,7 @@ export async function distributeSuperTokens(
 export async function deleteExamResult(studentId: string, projectName: string): Promise<ActionResult> {
   const supabase = createServiceClient()
   try {
+    await requireTeacher()
     const { error } = await supabase.from('exam_results')
       .delete().eq('student_id', studentId).eq('project_name', projectName)
     if (error) throw error
