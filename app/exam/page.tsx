@@ -7,6 +7,13 @@ import { submitExam, useSuperToken, useHint, getExamQuestionForStudent, getRevie
 import { getExamSession, clearExamSession } from '@/app/actions/session'
 import type { ActiveExamSession, ExamSet } from '@/types/exam'
 
+const DRAFT_SAVE_INTERVAL_MS = 30 * 1000
+const DRAFT_MAX_AGE_MS = 24 * 60 * 60 * 1000 // ร่างเก่าเกินไปไม่ควร auto-restore เผื่อกรณีอาจารย์ลบผลสอบแล้วให้สอบใหม่
+
+function getDraftKey(session: ActiveExamSession, setName: string) {
+  return `exam_draft_${session.student_id}_${session.project_name}_${setName}`
+}
+
 export default function ExamPage() {
   const router = useRouter()
   const supabase = createClient()
@@ -30,6 +37,52 @@ export default function ExamPage() {
   const codeContainerRef = useRef<HTMLDivElement>(null)
   const timerRef = useRef<NodeJS.Timeout | null>(null)
   const sessionRef = useRef<ActiveExamSession | null>(null)
+
+  // นับจำนวนข้อจาก DOM โดยตรง (ไม่มี answers.length ให้ใช้ — เฉลยไม่ถูกส่งมาที่ client อีกต่อไป, Phase 7.2)
+  function collectAnswersFromDom(): string[] {
+    const answers: string[] = []
+    let i = 0
+    while (true) {
+      const input = codeContainerRef.current?.querySelector(`#q${i}`) as HTMLInputElement | null
+      if (!input) break
+      answers.push(input.value || '')
+      i++
+    }
+    return answers
+  }
+
+  // ── Local draft autosave (Phase 7.1) — กันคำตอบหายถ้า tab ปิดไปหรือเน็ตหลุด ──
+  function saveDraft(session: ActiveExamSession, setName: string) {
+    try {
+      const answers = collectAnswersFromDom()
+      localStorage.setItem(getDraftKey(session, setName), JSON.stringify({ answers, savedAt: Date.now() }))
+    } catch {
+      // localStorage อาจเต็มหรือถูกปิด — ไม่ใช่ปัญหาคอขวด ปล่อยผ่านได้
+    }
+  }
+
+  function restoreDraft(session: ActiveExamSession, setName: string) {
+    try {
+      const raw = localStorage.getItem(getDraftKey(session, setName))
+      if (!raw) return
+      const draft = JSON.parse(raw) as { answers: string[]; savedAt: number }
+      if (Date.now() - draft.savedAt > DRAFT_MAX_AGE_MS) {
+        localStorage.removeItem(getDraftKey(session, setName))
+        return
+      }
+      draft.answers.forEach((value, i) => {
+        if (!value) return
+        const input = codeContainerRef.current?.querySelector(`#q${i}`) as HTMLInputElement | null
+        if (input) input.value = value
+      })
+    } catch {
+      // ร่างเสีย/parse ไม่ได้ — ข้ามไป ไม่กระทบการทำข้อสอบ
+    }
+  }
+
+  function clearDraft(session: ActiveExamSession, setName: string) {
+    try { localStorage.removeItem(getDraftKey(session, setName)) } catch {}
+  }
 
   // ── Init ────────────────────────────────────────────────
   useEffect(() => {
@@ -92,6 +145,9 @@ export default function ExamPage() {
            <button class="hint-btn super-btn" onclick="window.__useSuperToken($1)" title="ใช้ Super Token เติมคำตอบ">🌟</button>`
         )
         codeContainerRef.current.innerHTML = templateWithTokens
+
+        // กู้ร่างคำตอบที่เคย autosave ไว้ (ถ้ามี และยังไม่เก่าเกินไป)
+        if (sessionRef.current) restoreDraft(sessionRef.current, result.setName)
       }
     }, 50)
   }
@@ -218,6 +274,14 @@ export default function ExamPage() {
     }
   }, [hintsUsed, superTokens, currentSetName])
 
+  // ── Local draft autosave ทุก 30 วิ (Phase 7.1) ──────────
+  // หยุดทันทีหลังส่งข้อสอบสำเร็จ (showSuccessModal) กัน interval เก่าฟื้นคืนร่างที่เพิ่ง clearDraft() ไปแล้ว
+  useEffect(() => {
+    if (!session || session.mode !== 'exam' || !currentSetName || showSuccessModal) return
+    const intervalId = setInterval(() => saveDraft(session, currentSetName), DRAFT_SAVE_INTERVAL_MS)
+    return () => clearInterval(intervalId)
+  }, [session, currentSetName, showSuccessModal])
+
   // ── Realtime ─────────────────────────────────────────────
   function listenForSuperTokens(activeSession: ActiveExamSession) {
     return supabase.channel('student-token-updates')
@@ -245,15 +309,7 @@ export default function ExamPage() {
     setIsSubmitting(true)
     if (timerRef.current) clearInterval(timerRef.current)
 
-    // นับจำนวนข้อจาก DOM โดยตรง (ไม่มี answers.length ให้ใช้แล้ว — เฉลยไม่ถูกส่งมาที่ client อีกต่อไป)
-    const studentAnswers: string[] = []
-    let i = 0
-    while (true) {
-      const input = codeContainerRef.current?.querySelector(`#q${i}`) as HTMLInputElement | null
-      if (!input) break
-      studentAnswers.push(input.value || '')
-      i++
-    }
+    const studentAnswers = collectAnswersFromDom()
 
     // ตรวจคำตอบ + คำนวณคะแนนฝั่ง server เสมอ (submitExam) — client ส่งได้แค่คำตอบดิบ
     const result = await submitExam({
@@ -267,6 +323,7 @@ export default function ExamPage() {
       return
     }
 
+    clearDraft(session, currentSetName)
     setFinalScore(result.score)
     setShowSuccessModal(true)
     setIsSubmitting(false)
