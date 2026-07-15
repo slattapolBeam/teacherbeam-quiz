@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { submitExam, useSuperToken } from '@/app/actions/exam'
+import { submitExam, useSuperToken, useHint, getExamQuestionForStudent, getReviewData } from '@/app/actions/exam'
 import { getExamSession, clearExamSession } from '@/app/actions/session'
 import type { ActiveExamSession, ExamSet } from '@/types/exam'
 
@@ -54,9 +54,9 @@ export default function ExamPage() {
       setSuperTokens(activeSession.super_tokens || 0)
 
       if (activeSession.mode === 'review') {
-        setupReviewMode(activeSession)
+        setupReviewMode()
       } else {
-        setupExam(activeSession)
+        setupExam()
         startTimer()
         tokenChannel = listenForSuperTokens(activeSession)
         gachaChannel = listenForGachaDrops(activeSession)
@@ -74,45 +74,14 @@ export default function ExamPage() {
     }
   }, [])
 
-  // ── ดึงข้อสอบจาก exam_questions (Phase 3: ไม่มี hardcode fallback แล้ว) ──
-  async function fetchExamSet(projectName: string, classNumber: number): Promise<{ examSet: ExamSet; setName: string } | null> {
-    const { data: setRows, error: setsErr } = await supabase
-      .from('exam_questions').select('set_name').eq('project_name', projectName)
+  // ── Setup Exam (Phase 7.2: โจทย์มาจาก server เท่านั้น ไม่มี answers ติดมาด้วยเด็ดขาด) ──
+  async function setupExam() {
+    const result = await getExamQuestionForStudent()
+    if (!result.success) { setLoadError(result.error); return }
 
-    if (setsErr || !setRows || setRows.length === 0) {
-      setLoadError(`ไม่พบข้อสอบสำหรับวิชา "${projectName}" ในระบบ กรุณาแจ้งอาจารย์ผู้สอนให้เพิ่มข้อสอบก่อนครับ`)
-      return null
-    }
-
-    const availableSets = [...new Set(setRows.map((r: any) => r.set_name as string))].sort()
-    const setIndex = (classNumber || 0) % availableSets.length
-    const setName = availableSets[setIndex]
-
-    const { data: row, error: rowErr } = await supabase
-      .from('exam_questions').select('question, code, answers')
-      .eq('project_name', projectName).eq('set_name', setName).single()
-
-    if (rowErr || !row) {
-      setLoadError(`โหลดข้อสอบชุด "${setName}" ไม่สำเร็จ กรุณาแจ้งอาจารย์ผู้สอนครับ`)
-      return null
-    }
-
-    const examSet: ExamSet = {
-      title: row.question,
-      codeTemplate: row.code || '',
-      answers: (row.answers as string[]) || [],
-    }
-    return { examSet, setName }
-  }
-
-  // ── Setup Exam ──────────────────────────────────────────
-  async function setupExam(activeSession: ActiveExamSession) {
-    const result = await fetchExamSet(activeSession.project_name, activeSession.class_number)
-    if (!result) return
-    const { examSet, setName } = result
-
+    const examSet: ExamSet = { title: result.title, codeTemplate: result.codeTemplate }
     setCurrentExamSet(examSet)
-    setCurrentSetName(setName)
+    setCurrentSetName(result.setName)
 
     // inject HTML พร้อม super token buttons หลัง render
     setTimeout(() => {
@@ -127,62 +96,49 @@ export default function ExamPage() {
     }, 50)
   }
 
-  // ── Setup Review Mode ───────────────────────────────────
-  async function setupReviewMode(activeSession: ActiveExamSession) {
-    const result = await fetchExamSet(activeSession.project_name, activeSession.class_number)
-    if (!result) return
-    const { examSet, setName } = result
+  // ── Setup Review Mode (server เช็คซ้ำว่าห้องสอบปิดแล้วจริง ก่อนส่งเฉลยมาให้) ──
+  async function setupReviewMode() {
+    const result = await getReviewData()
+    if (!result.success) { setLoadError(result.error); return }
 
+    const examSet: ExamSet = { title: result.title, codeTemplate: result.codeTemplate, answers: result.answers }
     setCurrentExamSet(examSet)
-    setCurrentSetName(setName)
+    setCurrentSetName(result.setName)
 
-    setTimeout(async () => {
-      if (codeContainerRef.current) {
-        codeContainerRef.current.innerHTML = examSet.codeTemplate
-      }
+    setTimeout(() => {
+      if (!codeContainerRef.current) return
+      codeContainerRef.current.innerHTML = examSet.codeTemplate
 
-      try {
-        const { data } = await supabase.from('exam_results')
-          .select('student_answers, score')
-          .eq('student_id', activeSession.student_id)
-          .eq('project_name', activeSession.project_name)
-          .single()
+      const ansArray = result.studentAnswers
 
-        if (data && codeContainerRef.current) {
-          const ansArray = data.student_answers || []
+      for (let i = 0; i < result.answers.length; i++) {
+        const input = codeContainerRef.current.querySelector(`#q${i}`) as HTMLInputElement
+        if (!input) continue
 
-          for (let i = 0; i < examSet.answers.length; i++) {
-            const input = codeContainerRef.current.querySelector(`#q${i}`) as HTMLInputElement
-            if (!input) continue
+        const studentAns = ansArray[i] || ""
+        input.value = studentAns
+        input.disabled = true
 
-            const studentAns = ansArray[i] || ""
-            input.value = studentAns
-            input.disabled = true
+        const cleanStudent = studentAns.trim().toLowerCase().replace(/\s+/g, '')
+        const cleanCorrect = result.answers[i].toLowerCase().replace(/\s+/g, '')
 
-            const cleanStudent = studentAns.trim().toLowerCase().replace(/\s+/g, '')
-            const cleanCorrect = examSet.answers[i].toLowerCase().replace(/\s+/g, '')
-
-            if (cleanStudent === cleanCorrect ||
-              (cleanCorrect === "!=null" && cleanStudent === "!=null") ||
-              (cleanCorrect === "+=" && cleanStudent === "+=")) {
-              input.classList.add('bg-green-100', 'text-green-800', 'border-green-500')
-            } else {
-              input.classList.add('bg-red-100', 'text-red-800', 'border-red-500')
-              const span = document.createElement('span')
-              span.className = "text-xs bg-green-500 text-white px-2 py-1 rounded ml-2 shadow-sm font-sans"
-              span.innerText = "เฉลย: " + examSet.answers[i]
-              input.parentNode?.insertBefore(span, input.nextSibling)
-            }
-          }
-
-          // ซ่อน hint buttons ในโหมด review
-          codeContainerRef.current.querySelectorAll('.hint-btn').forEach((btn: any) => {
-            btn.style.display = 'none'
-          })
+        if (cleanStudent === cleanCorrect ||
+          (cleanCorrect === "!=null" && cleanStudent === "!=null") ||
+          (cleanCorrect === "+=" && cleanStudent === "+=")) {
+          input.classList.add('bg-green-100', 'text-green-800', 'border-green-500')
+        } else {
+          input.classList.add('bg-red-100', 'text-red-800', 'border-red-500')
+          const span = document.createElement('span')
+          span.className = "text-xs bg-green-500 text-white px-2 py-1 rounded ml-2 shadow-sm font-sans"
+          span.innerText = "เฉลย: " + result.answers[i]
+          input.parentNode?.insertBefore(span, input.nextSibling)
         }
-      } catch (err) {
-        console.error('ดึงข้อมูล Review ไม่สำเร็จ:', err)
       }
+
+      // ซ่อน hint buttons ในโหมด review
+      codeContainerRef.current.querySelectorAll('.hint-btn').forEach((btn: any) => {
+        btn.style.display = 'none'
+      })
     }, 50)
   }
 
@@ -209,27 +165,30 @@ export default function ExamPage() {
   // ── Hint System ─────────────────────────────────────────
   useEffect(() => {
     // expose functions ไว้บน window เพราะ codeTemplate inject onclick string ตรง ๆ
-    ;(window as any).__useHint = (index: number) => {
+    ;(window as any).__useHint = async (index: number) => {
       if (hintsUsed >= 3) {
         alert('❌ คุณใช้สิทธิ์คำใบ้ปกติ (💡) ครบ 3 ครั้งแล้วครับ!\nพยายามคิดด้วยตัวเอง หรือใช้ Super Token แทนนะ')
         return
       }
       const remaining = 3 - hintsUsed
       if (!confirm(`คุณมีสิทธิ์คำใบ้ปกติ (💡) เหลือ ${remaining} ครั้ง\nต้องการใช้ 1 สิทธิ์ เพื่อเติมคำใบ้ 2 ตัวอักษรลงในช่องนี้หรือไม่?`)) return
+      if (!currentSetName) return
 
-      setHintsUsed(prev => prev + 1)
+      // เฉลยดึงฝั่ง server เท่านั้น (Phase 7.2) — จำนวนครั้งก็นับฝั่ง server ผ่าน session cookie กันแก้ค่าจาก devtools
+      const result = await useHint(currentSetName, index)
+      if (!result.success) {
+        alert('❌ ' + result.error)
+        return
+      }
+      setHintsUsed(result.hintsUsed)
 
-      const examSet = currentExamSet
-      if (!examSet) return
-
-      const hint = examSet.answers[index]?.substring(0, 2) || ''
       const input = codeContainerRef.current?.querySelector(`#q${index}`) as HTMLInputElement
       if (input) {
-        input.value = hint
+        input.value = result.hint
         input.focus()
         input.classList.add('border-blue-500', 'bg-blue-900', 'text-white')
         setTimeout(() => input.classList.remove('border-blue-500', 'bg-blue-900', 'text-white'), 1500)
-        alert(`💡 เติมคำใบ้ "${hint}" ลงในช่องให้แล้วครับ!\n(เหลือสิทธิ์คำใบ้ปกติอีก ${3 - hintsUsed - 1} ครั้ง)`)
+        alert(`💡 เติมคำใบ้ "${result.hint}" ลงในช่องให้แล้วครับ!\n(เหลือสิทธิ์คำใบ้ปกติอีก ${3 - result.hintsUsed} ครั้ง)`)
       }
     }
 
@@ -239,8 +198,10 @@ export default function ExamPage() {
         return
       }
       if (!confirm(`คุณมีเหรียญ🌟 ${superTokens} เหรียญ\nต้องการใช้ 1 เหรียญ เพื่อเติมคำตอบข้อนี้ทันทีหรือไม่?`)) return
+      if (!currentSetName) return
 
-      const result = await useSuperToken()
+      // เฉลยข้อนี้ดึงฝั่ง server ตอนใช้เหรียญเท่านั้น (Phase 7.2)
+      const result = await useSuperToken(currentSetName, index)
       if (!result.success) {
         alert('❌ ' + result.error)
         return
@@ -248,15 +209,14 @@ export default function ExamPage() {
 
       setSuperTokens(result.tokens)
 
-      const examSet = currentExamSet
       const input = codeContainerRef.current?.querySelector(`#q${index}`) as HTMLInputElement
-      if (input && examSet) {
-        input.value = examSet.answers[index]
+      if (input) {
+        input.value = result.answer
         input.classList.add('bg-yellow-100', 'border-yellow-400', 'text-yellow-800')
         input.readOnly = true
       }
     }
-  }, [hintsUsed, superTokens, currentExamSet])
+  }, [hintsUsed, superTokens, currentSetName])
 
   // ── Realtime ─────────────────────────────────────────────
   function listenForSuperTokens(activeSession: ActiveExamSession) {
@@ -285,17 +245,19 @@ export default function ExamPage() {
     setIsSubmitting(true)
     if (timerRef.current) clearInterval(timerRef.current)
 
+    // นับจำนวนข้อจาก DOM โดยตรง (ไม่มี answers.length ให้ใช้แล้ว — เฉลยไม่ถูกส่งมาที่ client อีกต่อไป)
     const studentAnswers: string[] = []
-    const totalQuestions = currentExamSet.answers.length
-    for (let i = 0; i < totalQuestions; i++) {
-      const input = codeContainerRef.current?.querySelector(`#q${i}`) as HTMLInputElement
-      studentAnswers.push(input?.value || '')
+    let i = 0
+    while (true) {
+      const input = codeContainerRef.current?.querySelector(`#q${i}`) as HTMLInputElement | null
+      if (!input) break
+      studentAnswers.push(input.value || '')
+      i++
     }
 
     // ตรวจคำตอบ + คำนวณคะแนนฝั่ง server เสมอ (submitExam) — client ส่งได้แค่คำตอบดิบ
     const result = await submitExam({
       exam_set: currentSetName,
-      hints_used: hintsUsed,
       student_answers: studentAnswers,
     })
 

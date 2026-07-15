@@ -9,6 +9,7 @@ export interface ActiveExamSession {
   super_tokens: number
   got_gacha: boolean
   gacha_amount: number
+  hints_used?: number
 }
 
 export interface Student {
@@ -31,5 +32,6 @@ export interface ExamSession {
 export interface ExamSet {
   title: string
   codeTemplate: string
-  answers: string[]
+  // ไม่มีค่าตอนสอบจริง (Phase 7.2: server ไม่ส่งเฉลยมาให้ client เห็นอีกต่อไป) มีเฉพาะตอนดูเฉลยหลังสอบ
+  answers?: string[]
 }

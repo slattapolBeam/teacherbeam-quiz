@@ -15,6 +15,23 @@ type ExamQuestionRow = {
 
 type ActionResult<T extends object = {}> = ({ success: true } & T) | { success: false; error: string }
 
+type ExistingSetRow = { project_name: string; set_name: string; question: string }
+
+// ── รายการชุดข้อสอบที่มีอยู่แล้ว (ไม่มี answers) — เดิมหน้า import อ่านผ่าน anon key ตรง ๆ
+// ย้ายมาเป็น Server Action เพราะ exam_questions ถอด anon SELECT ออกหมดแล้ว (Phase 7.2) ──
+export async function listExamSets(): Promise<ActionResult<{ sets: ExistingSetRow[] }>> {
+  const supabase = createServiceClient()
+  try {
+    await requireTeacher()
+    const { data, error } = await supabase.from('exam_questions')
+      .select('project_name, set_name, question').order('project_name').order('set_name')
+    if (error) throw error
+    return { success: true, sets: data || [] }
+  } catch (err: any) {
+    return { success: false, error: err.message }
+  }
+}
+
 // ── บันทึกชุดข้อสอบ (แทนที่ทั้งหมด หรือ เพิ่มเติมเฉพาะชุดที่ระบุ) ──
 export async function saveExamQuestions(
   projectName: string,

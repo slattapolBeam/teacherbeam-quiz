@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { saveExamQuestions, deleteExamQuestionSet, deleteSubject } from '@/app/actions/import'
+import { saveExamQuestions, deleteExamQuestionSet, deleteSubject, listExamSets } from '@/app/actions/import'
 import { signOutTeacher } from '@/app/actions/auth'
 
 type ParsedSet = {
@@ -71,12 +71,13 @@ export default function ImportPage() {
   async function loadExisting() {
     setIsLoadingExisting(true)
     try {
-      const [{ data: subjectRows }, { data: setRows }] = await Promise.all([
+      const [{ data: subjectRows }, setsResult] = await Promise.all([
         supabase.from('subjects').select('name').eq('is_active', true).order('name'),
-        supabase.from('exam_questions').select('project_name, set_name, question').order('project_name').order('set_name'),
+        listExamSets(),
       ])
       setSubjects((subjectRows || []).map((s: any) => s.name))
-      setExistingSets(setRows || [])
+      setExistingSets(setsResult.success ? setsResult.sets : [])
+      if (!setsResult.success) console.error('โหลดรายการข้อสอบที่มีอยู่ไม่สำเร็จ:', setsResult.error)
     } catch (err) {
       console.error('โหลดรายการข้อสอบที่มีอยู่ไม่สำเร็จ:', err)
     } finally {

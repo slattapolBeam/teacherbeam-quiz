@@ -8,7 +8,8 @@ import type { ActiveExamSession } from '@/types/exam'
 const COOKIE_NAME = 'exam_session'
 const MAX_AGE = 60 * 60 * 4 // 4 ชั่วโมง พอสำหรับหนึ่งคาบเรียน
 
-async function setSessionCookie(session: ActiveExamSession) {
+// export ไว้ให้ exam.ts เรียกใช้ตอน re-sign cookie หลังอัปเดต hints_used
+export async function setSessionCookie(session: ActiveExamSession) {
   const store = await cookies()
   store.set(COOKIE_NAME, encodeSessionCookie(session), {
     httpOnly: true,
@@ -55,6 +56,7 @@ export async function startExamSession(studentId: string, pin: string): Promise<
     super_tokens: student.super_tokens || 0,
     got_gacha: false,
     gacha_amount: 0,
+    hints_used: 0,
   }
 
   await setSessionCookie(session)
