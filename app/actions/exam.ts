@@ -2,6 +2,7 @@
 
 import { createServiceClient } from '@/lib/supabase/server'
 import { getExamSession, setSessionCookie } from '@/app/actions/session'
+import { logActivity } from '@/lib/auditLog'
 
 // ชุดข้อสอบที่นักศึกษาแต่ละคนได้ กำหนดจาก class_number % จำนวนชุดที่มี (deterministic, ไม่สุ่ม)
 async function deriveSetName(supabase: ReturnType<typeof createServiceClient>, projectName: string, classNumber: number) {
@@ -79,6 +80,10 @@ export async function submitExam(input: SubmitExamInput): Promise<SubmitExamResu
     student_answers: input.student_answers,
   }])
   if (insertErr) return { success: false, error: insertErr.message }
+
+  await logActivity({ type: 'student', id: session.student_id }, 'exam_submit', session.project_name, {
+    exam_set: input.exam_set, score,
+  })
 
   return { success: true, score }
 }
@@ -181,6 +186,8 @@ export async function useSuperToken(setName: string, questionIndex: number): Pro
     .update({ super_tokens: newTokens }).eq('student_id', session.student_id)
   if (updateErr) return { success: false, error: updateErr.message }
 
+  await logActivity({ type: 'student', id: session.student_id }, 'super_token_used', setName, { questionIndex })
+
   return { success: true, tokens: newTokens, answer }
 }
 
@@ -206,6 +213,8 @@ export async function useHint(setName: string, questionIndex: number): Promise<U
   const hint = (row.answers as string[])?.[questionIndex]?.substring(0, 2) || ''
   const newHintsUsed = hintsUsed + 1
   await setSessionCookie({ ...session, hints_used: newHintsUsed })
+
+  await logActivity({ type: 'student', id: session.student_id }, 'hint_used', setName, { questionIndex, hintsUsed: newHintsUsed })
 
   return { success: true, hint, hintsUsed: newHintsUsed }
 }

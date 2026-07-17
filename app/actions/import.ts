@@ -2,6 +2,7 @@
 
 import { createServiceClient } from '@/lib/supabase/server'
 import { requireTeacher } from '@/app/actions/auth'
+import { logActivity } from '@/lib/auditLog'
 
 type ExamQuestionRow = {
   project_name: string
@@ -41,7 +42,7 @@ export async function saveExamQuestions(
 ): Promise<ActionResult<{ savedCount: number }>> {
   const supabase = createServiceClient()
   try {
-    await requireTeacher()
+    const teacher = await requireTeacher()
     if (mode === 'replace') {
       const { error: delErr } = await supabase.from('exam_questions')
         .delete().eq('project_name', projectName)
@@ -55,6 +56,9 @@ export async function saveExamQuestions(
     const { error: insertErr } = await supabase.from('exam_questions').insert(rows)
     if (insertErr) throw insertErr
 
+    await logActivity({ type: 'teacher', id: teacher.email }, 'save_exam_questions', projectName, {
+      mode, setNames, savedCount: rows.length,
+    })
     return { success: true, savedCount: rows.length }
   } catch (err: any) {
     return { success: false, error: err.message }
@@ -65,10 +69,11 @@ export async function saveExamQuestions(
 export async function deleteExamQuestionSet(projectName: string, setName: string): Promise<ActionResult> {
   const supabase = createServiceClient()
   try {
-    await requireTeacher()
+    const teacher = await requireTeacher()
     const { error } = await supabase.from('exam_questions')
       .delete().eq('project_name', projectName).eq('set_name', setName)
     if (error) throw error
+    await logActivity({ type: 'teacher', id: teacher.email }, 'delete_exam_question_set', projectName, { setName })
     return { success: true }
   } catch (err: any) {
     return { success: false, error: err.message }
@@ -80,7 +85,7 @@ export async function deleteExamQuestionSet(projectName: string, setName: string
 export async function deleteSubject(subjectName: string): Promise<ActionResult> {
   const supabase = createServiceClient()
   try {
-    await requireTeacher()
+    const teacher = await requireTeacher()
     const { error: delQuestionsErr } = await supabase.from('exam_questions')
       .delete().eq('project_name', subjectName)
     if (delQuestionsErr) throw delQuestionsErr
@@ -89,6 +94,7 @@ export async function deleteSubject(subjectName: string): Promise<ActionResult> 
       .delete().eq('name', subjectName)
     if (delSubjectErr) throw delSubjectErr
 
+    await logActivity({ type: 'teacher', id: teacher.email }, 'delete_subject', subjectName)
     return { success: true }
   } catch (err: any) {
     return { success: false, error: err.message }

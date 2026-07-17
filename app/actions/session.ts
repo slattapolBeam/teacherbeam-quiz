@@ -3,6 +3,7 @@
 import { cookies } from 'next/headers'
 import { createServiceClient } from '@/lib/supabase/server'
 import { encodeSessionCookie, decodeSessionCookie } from '@/lib/session'
+import { logActivity } from '@/lib/auditLog'
 import type { ActiveExamSession } from '@/types/exam'
 
 const COOKIE_NAME = 'exam_session'
@@ -60,6 +61,7 @@ export async function startExamSession(studentId: string, pin: string): Promise<
   }
 
   await setSessionCookie(session)
+  await logActivity({ type: 'student', id: student.student_id }, 'exam_session_start', projectName, { pin })
   return { success: true, session }
 }
 
@@ -92,6 +94,7 @@ export async function startReviewSession(studentId: string, projectName: string)
   }
 
   await setSessionCookie(session)
+  await logActivity({ type: 'student', id: student.student_id }, 'review_session_start', projectName)
   return { success: true, session }
 }
 
