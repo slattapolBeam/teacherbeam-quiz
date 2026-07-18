@@ -46,6 +46,8 @@ export default function DashboardPage() {
   const [generatingPin, setGeneratingPin] = useState(false)
   const [isDistributing, setIsDistributing] = useState(false)
   const [gachaWinners, setGachaWinners] = useState<string[]>([])
+  const [showGachaCountModal, setShowGachaCountModal] = useState(false)
+  const [gachaCountInput, setGachaCountInput] = useState('')
 
   // ── Table data ───────────────────────────────────────────
   const [globalExamData, setGlobalExamData] = useState<ExamRow[]>([])
@@ -186,11 +188,16 @@ export default function DashboardPage() {
   }
 
   // ── Gacha: random distribute super tokens ───────────────
+  // ใช้ modal ในหน้าเว็บแทน window.prompt() เพราะ prompt() ใช้ไม่ได้ในบาง preview environment (เช่น embedded iframe)
+  function openGachaCountModal() {
+    setGachaCountInput('')
+    setShowGachaCountModal(true)
+  }
+
   async function distributeSuperTokens() {
-    const countStr = prompt('🎁 ระบบสุ่มแจก Super Token 🎁\nกรุณาระบุจำนวนนักศึกษาที่ต้องการแจก (ระบบจะสุ่มให้เฉพาะคนที่ยังสอบไม่เสร็จ):')
-    if (!countStr) return
-    const count = parseInt(countStr)
+    const count = parseInt(gachaCountInput)
     if (isNaN(count) || count <= 0) return alert('โปรดระบุจำนวนคนเป็นตัวเลขที่ถูกต้อง')
+    setShowGachaCountModal(false)
 
     setIsDistributing(true)
     const result = await distributeSuperTokensAction(projectFilter, currentRoom, count, gachaWinners)
@@ -507,7 +514,7 @@ export default function DashboardPage() {
                   <span className="text-[10px] uppercase font-bold tracking-wider">ปิดสอบ</span>
                 </button>
                 <button
-                  onClick={distributeSuperTokens}
+                  onClick={openGachaCountModal}
                   disabled={isDistributing}
                   title="สุ่มแจก Super Token ให้นักศึกษาที่กำลังสอบอยู่"
                   className="px-4 bg-yellow-50 hover:bg-yellow-100 disabled:opacity-60 border border-yellow-200 text-yellow-700 font-medium rounded-xl transition active:scale-95 flex flex-col items-center justify-center"
@@ -616,6 +623,39 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* Gacha count modal */}
+      {showGachaCountModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-sm w-full mx-4 p-6">
+            <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">🎁 ระบบสุ่มแจก Super Token</h2>
+            <p className="text-sm text-gray-500 mt-1">ระบุจำนวนนักศึกษาที่ต้องการแจก (ระบบจะสุ่มให้เฉพาะคนที่ยังสอบไม่เสร็จ)</p>
+            <input
+              type="number"
+              min={1}
+              value={gachaCountInput}
+              onChange={e => setGachaCountInput(e.target.value)}
+              autoFocus
+              className="w-full mt-4 bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5 font-medium"
+              placeholder="เช่น 3"
+            />
+            <div className="flex gap-3 mt-5">
+              <button
+                onClick={() => setShowGachaCountModal(false)}
+                className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-xl transition"
+              >
+                ยกเลิก
+              </button>
+              <button
+                onClick={distributeSuperTokens}
+                className="flex-1 py-3 bg-yellow-500 hover:bg-yellow-600 text-white font-medium rounded-xl transition"
+              >
+                สุ่มแจก
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Give Token Modal */}
       {showGiveTokenModal && (
