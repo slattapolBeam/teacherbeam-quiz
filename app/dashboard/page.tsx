@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import {
   generatePin as generatePinAction,
@@ -36,6 +36,8 @@ export default function DashboardPage() {
   const [isLoadingProjects, setIsLoadingProjects] = useState(true)
   const [projectFilter, setProjectFilter] = useState('')
   const [currentRoom, setCurrentRoom] = useState('ALL')
+  const [roomMenuOpen, setRoomMenuOpen] = useState(false)
+  const roomMenuRef = useRef<HTMLDivElement>(null)
   const [sortMode, setSortMode] = useState<'default' | 'number'>('default')
   const [realtimeOn, setRealtimeOn] = useState(false)
 
@@ -139,6 +141,18 @@ export default function DashboardPage() {
     checkSessionStatus(projectFilter)
     fetchExamResults(projectFilter)
   }, [projectFilter])
+
+  // ── ปิด dropdown เลือกห้องเรียนเมื่อคลิกนอกกล่อง ──
+  useEffect(() => {
+    if (!roomMenuOpen) return
+    function handleClickOutside(e: MouseEvent) {
+      if (roomMenuRef.current && !roomMenuRef.current.contains(e.target as Node)) {
+        setRoomMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [roomMenuOpen])
 
   // ── รายชื่อคนที่เคยถูกสุ่มได้ Super Token แล้วในห้องสอบรอบนี้ ──
   // เก็บแยกตามวิชา+PIN เพื่อไม่ให้คนเดิมถูกสุ่มซ้ำในรอบเดียวกัน (เพิ่มโอกาสให้คนที่ยังไม่เคยได้)
@@ -455,24 +469,82 @@ export default function DashboardPage() {
 
             <div className="hidden lg:block w-px h-12 bg-gray-200" />
 
-            <div className="flex-1 overflow-x-auto">
+            <div className="flex-1">
               <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">เลือกห้องเรียน</label>
               <div className="flex items-center gap-2 pb-1">
-                <button
-                  onClick={() => setCurrentRoom('ALL')}
-                  className={`tab-btn px-4 py-2 rounded-xl text-sm font-medium ${currentRoom === 'ALL' ? 'active' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}
-                >
-                  ทั้งหมด
-                </button>
-                {rooms.map(room => (
+                <div className="relative shrink-0" ref={roomMenuRef}>
                   <button
-                    key={room}
-                    onClick={() => setCurrentRoom(room)}
-                    className={`tab-btn px-4 py-2 rounded-xl text-sm font-medium ${currentRoom === room ? 'active' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+                    type="button"
+                    onClick={() => setRoomMenuOpen(o => !o)}
+                    aria-haspopup="listbox"
+                    aria-expanded={roomMenuOpen}
+                    className={`flex items-center justify-between gap-2 min-w-[9rem] px-4 py-2 rounded-xl text-sm font-medium bg-white border transition ${
+                      roomMenuOpen ? 'border-blue-400 ring-2 ring-blue-100' : 'border-gray-200 hover:border-gray-300'
+                    }`}
                   >
-                    {room}
+                    <span className="flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full ${currentRoom === 'ALL' ? 'bg-blue-500' : 'bg-emerald-500'}`} />
+                      <span className="text-gray-800">{currentRoom === 'ALL' ? 'ทั้งหมด' : currentRoom}</span>
+                    </span>
+                    <svg
+                      className={`w-4 h-4 text-gray-400 transition-transform ${roomMenuOpen ? 'rotate-180' : ''}`}
+                      viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"
+                    >
+                      <path d="M5 7.5L10 12.5L15 7.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
                   </button>
-                ))}
+
+                  {roomMenuOpen && (
+                    <div
+                      role="listbox"
+                      className="absolute z-20 mt-2 w-56 max-h-72 overflow-y-auto bg-white border border-gray-200 rounded-xl shadow-lg py-1.5"
+                    >
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={currentRoom === 'ALL'}
+                        onClick={() => { setCurrentRoom('ALL'); setRoomMenuOpen(false) }}
+                        className={`w-full flex items-center justify-between px-3.5 py-2 text-sm text-left transition ${
+                          currentRoom === 'ALL' ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700 hover:bg-gray-50'
+                        }`}
+                      >
+                        ทั้งหมด
+                        {currentRoom === 'ALL' && (
+                          <svg className="w-4 h-4" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M4 10.5L8 14.5L16 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        )}
+                      </button>
+
+                      {rooms.length > 0 && <div className="my-1 border-t border-gray-100" />}
+
+                      {rooms.map(room => (
+                        <button
+                          type="button"
+                          role="option"
+                          aria-selected={currentRoom === room}
+                          key={room}
+                          onClick={() => { setCurrentRoom(room); setRoomMenuOpen(false) }}
+                          className={`w-full flex items-center justify-between px-3.5 py-2 text-sm text-left transition ${
+                            currentRoom === room ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700 hover:bg-gray-50'
+                          }`}
+                        >
+                          {room}
+                          {currentRoom === room && (
+                            <svg className="w-4 h-4" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                              <path d="M4 10.5L8 14.5L16 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                          )}
+                        </button>
+                      ))}
+
+                      {rooms.length === 0 && (
+                        <p className="px-3.5 py-2 text-sm text-gray-400">ไม่มีห้องเรียน</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+
                 {currentRoom !== 'ALL' && (
                   <button
                     onClick={resetRoomTokens}
