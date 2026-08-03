@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { submitExam, useSuperToken, useHint, getExamQuestionForStudent, getReviewData } from '@/app/actions/exam'
 import { getExamSession, clearExamSession } from '@/app/actions/session'
-import type { ActiveExamSession, ExamSet } from '@/types/exam'
+import type { ActiveExamSession, ExamSet, ExamFile } from '@/types/exam'
 
 const DRAFT_SAVE_INTERVAL_MS = 30 * 1000
 const DRAFT_MAX_AGE_MS = 24 * 60 * 60 * 1000 // ร่างเก่าเกินไปไม่ควร auto-restore เผื่อกรณีอาจารย์ลบผลสอบแล้วให้สอบใหม่
@@ -26,6 +26,8 @@ export default function ExamPage() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [superTokens, setSuperTokens] = useState(0)
   const [hintsUsed, setHintsUsed] = useState(0)
+  const [examFiles, setExamFiles] = useState<ExamFile[] | null>(null)
+  const [activeFileIndex, setActiveFileIndex] = useState(0)
 
   // Modal states
   const [showGachaModal, setShowGachaModal] = useState(false)
@@ -84,6 +86,22 @@ export default function ExamPage() {
     try { localStorage.removeItem(getDraftKey(session, setName)) } catch {}
   }
 
+  // ── ต่อสาย hint/super-token ให้ปุ่มที่ inject มากับ codeTemplate ──
+  // marker "useHint(N)" = ช่องเติมคำ (มีทั้งปุ่มคำใบ้และ Super Token)
+  // marker "useSuperToken(N)" = ช่อง dropdown (มีแค่ปุ่ม Super Token เพราะเผยคำใบ้บางส่วนไม่มีประโยชน์เมื่อมีตัวเลือกให้ไม่กี่อัน)
+  function wireButtons(html: string): string {
+    return html
+      .replace(
+        /<button class="hint-btn" onclick="useHint\((\d+)\)">💡<\/button>/g,
+        `<button class="hint-btn" onclick="window.__useHint($1)" title="ดูคำใบ้ (จำกัด 3 ครั้ง)">💡</button>
+         <button class="hint-btn super-btn" onclick="window.__useSuperToken($1)" title="ใช้ Super Token เติมคำตอบ">🌟</button>`
+      )
+      .replace(
+        /<button class="hint-btn" onclick="useSuperToken\((\d+)\)">🌟<\/button>/g,
+        `<button class="hint-btn super-btn" onclick="window.__useSuperToken($1)" title="ใช้ Super Token เติมคำตอบ">🌟</button>`
+      )
+  }
+
   // ── Init ────────────────────────────────────────────────
   useEffect(() => {
     let tokenChannel: ReturnType<typeof supabase.channel> | null = null
@@ -132,23 +150,29 @@ export default function ExamPage() {
     const result = await getExamQuestionForStudent()
     if (!result.success) { setLoadError(result.error); return }
 
-    const examSet: ExamSet = { title: result.title, codeTemplate: result.codeTemplate }
+    const examSet: ExamSet = result.files
+      ? { title: result.title, files: result.files }
+      : { title: result.title, codeTemplate: result.codeTemplate }
     setCurrentExamSet(examSet)
     setCurrentSetName(result.setName)
+    setExamFiles(result.files ?? null)
+    setActiveFileIndex(0)
 
     // inject HTML พร้อม super token buttons หลัง render
     setTimeout(() => {
-      if (codeContainerRef.current) {
-        const templateWithTokens = examSet.codeTemplate.replace(
-          /<button class="hint-btn" onclick="useHint\((\d+)\)">💡<\/button>/g,
-          `<button class="hint-btn" onclick="window.__useHint($1)" title="ดูคำใบ้ (จำกัด 3 ครั้ง)">💡</button>
-           <button class="hint-btn super-btn" onclick="window.__useSuperToken($1)" title="ใช้ Super Token เติมคำตอบ">🌟</button>`
-        )
-        codeContainerRef.current.innerHTML = templateWithTokens
-
-        // กู้ร่างคำตอบที่เคย autosave ไว้ (ถ้ามี และยังไม่เก่าเกินไป)
-        if (sessionRef.current) restoreDraft(sessionRef.current, result.setName)
+      if (!codeContainerRef.current) return
+      if (result.files) {
+        // mount ทุกไฟล์พร้อมกันหมด (ไฟล์ที่ไม่ active แค่ซ่อนด้วย CSS ไม่ได้เอาออกจาก DOM)
+        // เพื่อให้ collectAnswersFromDom/autosave/hint/super-token สแกนหา #q{i} เจอครบทุกไฟล์เสมอ
+        codeContainerRef.current.innerHTML = result.files
+          .map((f, i) => `<div data-file-panel="${i}"${i === 0 ? '' : ' style="display:none;"'}>${wireButtons(f.codeTemplate)}</div>`)
+          .join('')
+      } else {
+        codeContainerRef.current.innerHTML = wireButtons(result.codeTemplate || '')
       }
+
+      // กู้ร่างคำตอบที่เคย autosave ไว้ (ถ้ามี และยังไม่เก่าเกินไป)
+      if (sessionRef.current) restoreDraft(sessionRef.current, result.setName)
     }, 50)
   }
 
@@ -157,13 +181,23 @@ export default function ExamPage() {
     const result = await getReviewData()
     if (!result.success) { setLoadError(result.error); return }
 
-    const examSet: ExamSet = { title: result.title, codeTemplate: result.codeTemplate, answers: result.answers }
+    const examSet: ExamSet = result.files
+      ? { title: result.title, files: result.files, answers: result.answers }
+      : { title: result.title, codeTemplate: result.codeTemplate, answers: result.answers }
     setCurrentExamSet(examSet)
     setCurrentSetName(result.setName)
+    setExamFiles(result.files ?? null)
+    setActiveFileIndex(0)
 
     setTimeout(() => {
       if (!codeContainerRef.current) return
-      codeContainerRef.current.innerHTML = examSet.codeTemplate
+      if (result.files) {
+        codeContainerRef.current.innerHTML = result.files
+          .map((f, i) => `<div data-file-panel="${i}"${i === 0 ? '' : ' style="display:none;"'}>${f.codeTemplate}</div>`)
+          .join('')
+      } else {
+        codeContainerRef.current.innerHTML = result.codeTemplate || ''
+      }
 
       const ansArray = result.studentAnswers
 
@@ -265,14 +299,25 @@ export default function ExamPage() {
 
       setSuperTokens(result.tokens)
 
-      const input = codeContainerRef.current?.querySelector(`#q${index}`) as HTMLInputElement
-      if (input) {
-        input.value = result.answer
-        input.classList.add('bg-yellow-100', 'border-yellow-400', 'text-yellow-800')
-        input.readOnly = true
+      // ช่อง dropdown เป็น <select> ไม่มี readOnly ต้องใช้ disabled แทน
+      const el = codeContainerRef.current?.querySelector(`#q${index}`) as (HTMLInputElement | HTMLSelectElement | null)
+      if (el) {
+        el.value = result.answer
+        el.classList.add('bg-yellow-100', 'border-yellow-400', 'text-yellow-800')
+        if (el instanceof HTMLSelectElement) el.disabled = true
+        else el.readOnly = true
       }
     }
   }, [hintsUsed, superTokens, currentSetName])
+
+  // ── สลับแท็บไฟล์ (multi-file exam) — ไฟล์อื่นยังอยู่ใน DOM แค่ซ่อนไว้ ──
+  useEffect(() => {
+    if (!examFiles) return
+    codeContainerRef.current?.querySelectorAll('[data-file-panel]').forEach(el => {
+      const idx = Number((el as HTMLElement).dataset.filePanel)
+      ;(el as HTMLElement).style.display = idx === activeFileIndex ? '' : 'none'
+    })
+  }, [activeFileIndex, examFiles])
 
   // ── Local draft autosave ทุก 30 วิ (Phase 7.1) ──────────
   // หยุดทันทีหลังส่งข้อสอบสำเร็จ (showSuccessModal) กัน interval เก่าฟื้นคืนร่างที่เพิ่ง clearDraft() ไปแล้ว
@@ -418,6 +463,21 @@ export default function ExamPage() {
               </div>
               <div className="text-sm text-gray-500 font-medium">คะแนนเต็ม: 10 คะแนน</div>
             </div>
+            {examFiles && examFiles.length > 1 && (
+              <div className="flex gap-1 px-6 pt-4 border-b border-gray-200 overflow-x-auto bg-white">
+                {examFiles.map((f, i) => (
+                  <button
+                    key={f.filename}
+                    onClick={() => setActiveFileIndex(i)}
+                    className={`px-4 py-2 text-sm font-mono rounded-t-lg border-b-2 transition whitespace-nowrap ${
+                      i === activeFileIndex ? 'border-blue-500 text-blue-600 bg-blue-50' : 'border-transparent text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    📄 {f.filename}
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="p-6">
               <div ref={codeContainerRef} className="code-block text-sm sm:text-base">
                 {/* HTML จาก exam database จะถูก inject เข้ามาผ่าน useEffect */}

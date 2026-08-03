@@ -2,14 +2,18 @@
 
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { saveExamQuestions, deleteExamQuestionSet, deleteSubject, listExamSets } from '@/app/actions/import'
+import { saveExamQuestions, deleteExamQuestionSet, deleteSubject, listExamSets, createSubject } from '@/app/actions/import'
 import { signOutTeacher } from '@/app/actions/auth'
+
+type BlankType = { type: 'dropdown'; choices: string[] } | null
 
 type ParsedSet = {
   setName: string
   title: string
-  code: string
+  code: string | null
+  files: { filename: string; code: string }[] | null
   answers: string[]
+  blankTypes: BlankType[]
   blanks: number
   ok: boolean
   errorMsg?: string
@@ -28,23 +32,89 @@ type ExistingSetRow = {
   question: string
 }
 
-// ── แปลง "___" เป็น <input id="qN"> ตามลำดับ ────────────────
-function buildCodeFromTemplate(template: string, answers: string[]): { code: string; blanks: number; ok: boolean; errorMsg?: string } {
-  const blanks = (template.match(/___/g) || []).length
-  if (blanks !== answers.length || blanks === 0) {
-    return {
-      code: '', blanks, ok: false,
-      errorMsg: `พบ "___" ${blanks} ช่อง แต่มีคำตอบ ${answers.length} คำตอบ (ต้องเท่ากัน)`,
-    }
-  }
-  let index = 0
+function escapeHtml(s: string) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+// ── แปลง "___" ในไฟล์เดียวเป็น <input>/<select> ตามลำดับ เริ่มนับต่อจาก startIndex ──
+// (สำหรับชุดหลายไฟล์ เลขช่องจะนับต่อเนื่องข้ามไฟล์ ไม่รีเซ็ตเป็น 0 ทุกไฟล์)
+function buildFileCode(template: string, answers: string[], blankTypes: BlankType[], startIndex: number): { code: string; nextIndex: number; errorMsg?: string } {
+  let index = startIndex
+  let errorMsg: string | undefined
   const code = template.replace(/___/g, () => {
-    const width = Math.max(60, (answers[index]?.length || 4) * 11 + 40)
-    const html = `<input type="text" class="code-input" style="width: ${width}px;" id="q${index}"><button class="hint-btn" onclick="useHint(${index})">💡</button>`
+    const answer = answers[index]
+    const meta = blankTypes[index]
+    let html: string
+    if (meta) {
+      if (!meta.choices.includes(answer)) {
+        errorMsg = `ช่องที่ ${index} (dropdown): เฉลย "${answer}" ไม่อยู่ในตัวเลือก [${meta.choices.join(', ')}]`
+      }
+      const options = meta.choices.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')
+      html = `<select class="code-input code-select" id="q${index}"><option value="">-- เลือก --</option>${options}</select><button class="hint-btn" onclick="useSuperToken(${index})">🌟</button>`
+    } else {
+      const width = Math.max(60, (answer?.length || 4) * 11 + 40)
+      html = `<input type="text" class="code-input" style="width: ${width}px;" id="q${index}"><button class="hint-btn" onclick="useHint(${index})">💡</button>`
+    }
     index++
     return html
   })
-  return { code, blanks, ok: true }
+  return { code, nextIndex: index, errorMsg }
+}
+
+// ── ประกอบชุดข้อสอบจาก JSON ดิบ — รองรับทั้ง "code" (ไฟล์เดียว, แบบเดิม) และ "files" (หลายไฟล์) ──
+// "blanks" (ทางเลือก) ระบุประเภทของแต่ละช่องแบบขนานกับ answers — ไม่ระบุ = เติมคำแบบเดิมทุกช่อง
+function buildSetFromRaw(rawSet: any, answers: string[]): {
+  code: string | null
+  files: { filename: string; code: string }[] | null
+  blankTypes: BlankType[]
+  blanks: number
+  ok: boolean
+  errorMsg?: string
+} {
+  const rawBlankTypes: any[] = Array.isArray(rawSet.blanks) ? rawSet.blanks : []
+  const blankTypes: BlankType[] = answers.map((_, i) => {
+    const b = rawBlankTypes[i]
+    if (b && b.type === 'dropdown' && Array.isArray(b.choices)) {
+      return { type: 'dropdown', choices: b.choices.map(String) }
+    }
+    return null
+  })
+
+  const hasFiles = Array.isArray(rawSet.files) && rawSet.files.length > 0
+  const hasCode = typeof rawSet.code === 'string' && rawSet.code.length > 0
+
+  if (hasFiles && hasCode) {
+    return { code: null, files: null, blankTypes, blanks: 0, ok: false, errorMsg: 'มีทั้ง "code" และ "files" พร้อมกัน ต้องเลือกอย่างใดอย่างหนึ่ง' }
+  }
+  if (!hasFiles && !hasCode) {
+    return { code: null, files: null, blankTypes, blanks: 0, ok: false, errorMsg: 'ต้องมี "code" (ไฟล์เดียว) หรือ "files" (หลายไฟล์) อย่างใดอย่างหนึ่ง' }
+  }
+
+  const rawFiles: { filename?: string; code: string }[] = hasFiles ? rawSet.files : [{ code: rawSet.code }]
+
+  let index = 0
+  const builtFiles: { filename: string; code: string }[] = []
+  let errorMsg: string | undefined
+
+  for (const f of rawFiles) {
+    if (hasFiles && (!f.filename || typeof f.code !== 'string')) {
+      errorMsg = 'แต่ละไฟล์ใน "files" ต้องมี "filename" และ "code"'
+      break
+    }
+    const built = buildFileCode(f.code, answers, blankTypes, index)
+    builtFiles.push({ filename: f.filename || '', code: built.code })
+    index = built.nextIndex
+    if (built.errorMsg) { errorMsg = built.errorMsg; break }
+  }
+
+  if (!errorMsg && (index !== answers.length || index === 0)) {
+    errorMsg = `พบ "___" รวม ${index} ช่อง แต่มีคำตอบ ${answers.length} คำตอบ (ต้องเท่ากัน)`
+  }
+
+  if (hasFiles) {
+    return { code: null, files: builtFiles, blankTypes, blanks: index, ok: !errorMsg, errorMsg }
+  }
+  return { code: builtFiles[0]?.code ?? '', files: null, blankTypes, blanks: index, ok: !errorMsg, errorMsg }
 }
 
 export default function ImportPage() {
@@ -63,6 +133,13 @@ export default function ImportPage() {
   const [isLoadingExisting, setIsLoadingExisting] = useState(false)
   const [deletingKey, setDeletingKey] = useState<string | null>(null)
   const [deletingSubject, setDeletingSubject] = useState<string | null>(null)
+
+  // ── เพิ่มวิชาใหม่ ──────────────────────────────────────────
+  const [showAddSubjectModal, setShowAddSubjectModal] = useState(false)
+  const [newSubjectName, setNewSubjectName] = useState('')
+  const [newSubjectDescription, setNewSubjectDescription] = useState('')
+  const [isCreatingSubject, setIsCreatingSubject] = useState(false)
+  const [addSubjectError, setAddSubjectError] = useState('')
 
   useEffect(() => {
     loadExisting()
@@ -116,12 +193,14 @@ export default function ImportPage() {
     const parsedSets: ParsedSet[] = setNames.map(setName => {
       const set = data.sets[setName] || {}
       const answers: string[] = Array.isArray(set.answers) ? set.answers : []
-      const built = buildCodeFromTemplate(String(set.code || ''), answers)
+      const built = buildSetFromRaw(set, answers)
       return {
         setName,
         title: set.title || '(ไม่มีชื่อชุด)',
         code: built.code,
+        files: built.files,
         answers,
+        blankTypes: built.blankTypes,
         blanks: built.blanks,
         ok: built.ok,
         errorMsg: built.errorMsg,
@@ -151,7 +230,9 @@ export default function ImportPage() {
       type: 'fill',
       question: s.title,
       code: s.code,
+      files: s.files,
       answers: s.answers,
+      blank_types: s.blankTypes.some(b => b) ? s.blankTypes : null,
     }))
 
     const result = await saveExamQuestions(validation.projectName, setNames, saveMode, rows)
@@ -165,6 +246,27 @@ export default function ImportPage() {
       setSaveMessage({ text: 'บันทึกไม่สำเร็จ: ' + result.error, ok: false })
     }
     setIsSaving(false)
+  }
+
+  // ── เพิ่มวิชาใหม่ ──────────────────────────────────────────
+  function openAddSubjectModal(prefillName?: string) {
+    setNewSubjectName(prefillName || '')
+    setNewSubjectDescription('')
+    setAddSubjectError('')
+    setShowAddSubjectModal(true)
+  }
+
+  async function handleCreateSubject() {
+    setIsCreatingSubject(true)
+    setAddSubjectError('')
+    const result = await createSubject(newSubjectName, newSubjectDescription)
+    if (result.success) {
+      setShowAddSubjectModal(false)
+      await loadExisting()
+    } else {
+      setAddSubjectError(result.error)
+    }
+    setIsCreatingSubject(false)
   }
 
   // ── ลบชุดข้อสอบ ───────────────────────────────────────────
@@ -276,6 +378,18 @@ export default function ImportPage() {
               </div>
             )}
 
+            {validation.valid && !subjects.includes(validation.projectName) && (
+              <div className="bg-orange-50 border border-orange-200 rounded-2xl p-4 mb-3 flex items-center justify-between gap-3">
+                <p className="text-sm text-orange-900">⚠️ ยังไม่มีวิชา "{validation.projectName}" ในระบบ ต้องสร้างก่อนถึงจะบันทึกข้อสอบได้</p>
+                <button
+                  onClick={() => openAddSubjectModal(validation.projectName)}
+                  className="shrink-0 px-3 py-2 bg-orange-600 hover:bg-orange-700 text-white text-xs font-medium rounded-lg transition active:scale-95 whitespace-nowrap"
+                >
+                  + สร้างวิชานี้
+                </button>
+              </div>
+            )}
+
             {validation.sets.length > 0 && (
               <div className="bg-white rounded-3xl border border-gray-200 p-6">
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">พรีวิว: {validation.projectName}</p>
@@ -289,8 +403,18 @@ export default function ImportPage() {
                           <p className="text-xs text-gray-400 truncate max-w-[280px]">{s.title}</p>
                         </div>
                       </div>
-                      <span className={`text-xs whitespace-nowrap ${s.ok ? 'text-gray-500' : 'text-red-500'}`}>
-                        {s.blanks} ช่อง / {s.answers.length} คำตอบ
+                      <span className="flex items-center gap-1.5 shrink-0">
+                        {s.files && (
+                          <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full whitespace-nowrap">📁 {s.files.length} ไฟล์</span>
+                        )}
+                        {s.blankTypes.some(b => b) && (
+                          <span className="text-xs bg-purple-50 text-purple-600 px-2 py-0.5 rounded-full whitespace-nowrap">
+                            🔽 {s.blankTypes.filter(b => b).length} dropdown
+                          </span>
+                        )}
+                        <span className={`text-xs whitespace-nowrap ${s.ok ? 'text-gray-500' : 'text-red-500'}`}>
+                          {s.blanks} ช่อง / {s.answers.length} คำตอบ
+                        </span>
                       </span>
                     </div>
                   ))}
@@ -336,7 +460,10 @@ export default function ImportPage() {
         <div className="bg-white rounded-3xl border border-gray-200 p-6">
           <div className="flex items-center justify-between mb-3">
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">ข้อสอบที่มีอยู่แล้วในระบบ</p>
-            <button onClick={loadExisting} className="text-xs text-gray-400 hover:text-gray-600 transition">🔄 รีเฟรช</button>
+            <div className="flex items-center gap-3">
+              <button onClick={() => openAddSubjectModal()} className="text-xs text-blue-600 hover:text-blue-700 font-medium transition">+ เพิ่มวิชาใหม่</button>
+              <button onClick={loadExisting} className="text-xs text-gray-400 hover:text-gray-600 transition">🔄 รีเฟรช</button>
+            </div>
           </div>
 
           {isLoadingExisting ? (
@@ -392,6 +519,57 @@ export default function ImportPage() {
           )}
         </div>
       </div>
+
+      {/* Add Subject Modal */}
+      {showAddSubjectModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-sm w-full mx-4 p-6">
+            <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">➕ เพิ่มวิชาใหม่</h2>
+            <p className="text-sm text-gray-500 mt-1">ชื่อวิชาต้องตรงกับ "project_name" ใน JSON ที่จะ import เป๊ะ</p>
+
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mt-4 mb-1.5">ชื่อวิชา (project_name)</label>
+            <input
+              type="text"
+              value={newSubjectName}
+              onChange={e => setNewSubjectName(e.target.value)}
+              autoFocus
+              className="w-full bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5 font-mono"
+              placeholder="เช่น FirebaseSetup"
+            />
+
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mt-4 mb-1.5">ชื่อที่แสดงผล (ไม่บังคับ)</label>
+            <input
+              type="text"
+              value={newSubjectDescription}
+              onChange={e => setNewSubjectDescription(e.target.value)}
+              className="w-full bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5"
+              placeholder="เช่น การตั้งค่า Firebase (ถ้าเว้นว่างจะใช้ชื่อวิชาแทน)"
+            />
+
+            {addSubjectError && (
+              <div className="mt-4 p-3 bg-red-50 text-red-600 text-sm font-medium rounded-xl border border-red-100">
+                {addSubjectError}
+              </div>
+            )}
+
+            <div className="flex gap-3 mt-5">
+              <button
+                onClick={() => setShowAddSubjectModal(false)}
+                className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-xl transition"
+              >
+                ยกเลิก
+              </button>
+              <button
+                onClick={handleCreateSubject}
+                disabled={isCreatingSubject || !newSubjectName.trim()}
+                className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-medium rounded-xl transition"
+              >
+                {isCreatingSubject ? 'กำลังสร้าง...' : 'สร้างวิชา'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

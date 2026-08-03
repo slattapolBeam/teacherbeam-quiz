@@ -51,6 +51,13 @@ body {
 
 .code-input:disabled { opacity: 0.9; cursor: not-allowed; }
 
+.code-select {
+  cursor: pointer;
+  padding-right: 1.5rem;
+}
+
+.code-select:disabled { cursor: not-allowed; }
+
 .hint-btn {
   background: none; 
   border: none;

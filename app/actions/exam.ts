@@ -88,8 +88,10 @@ export async function submitExam(input: SubmitExamInput): Promise<SubmitExamResu
   return { success: true, score }
 }
 
+type ExamFileOut = { filename: string; codeTemplate: string }
+
 type GetQuestionResult =
-  | { success: true; setName: string; title: string; codeTemplate: string }
+  | { success: true; setName: string; title: string; codeTemplate?: string; files?: ExamFileOut[] }
   | { success: false; error: string }
 
 // ── โจทย์สำหรับสอบจริง — ไม่ส่งเฉลยมาด้วยเด็ดขาด (Phase 7.2) ──
@@ -107,16 +109,20 @@ export async function getExamQuestionForStudent(): Promise<GetQuestionResult> {
   }
 
   const { data: row, error: rowErr } = await supabase.from('exam_questions')
-    .select('question, code').eq('project_name', session.project_name).eq('set_name', setName).single()
+    .select('question, code, files').eq('project_name', session.project_name).eq('set_name', setName).single()
   if (rowErr || !row) {
     return { success: false, error: `โหลดข้อสอบชุด "${setName}" ไม่สำเร็จ กรุณาแจ้งอาจารย์ผู้สอนครับ` }
   }
 
+  if (row.files && Array.isArray(row.files) && row.files.length > 0) {
+    const files = (row.files as { filename: string; code: string }[]).map(f => ({ filename: f.filename, codeTemplate: f.code }))
+    return { success: true, setName, title: row.question, files }
+  }
   return { success: true, setName, title: row.question, codeTemplate: row.code || '' }
 }
 
 type ReviewDataResult =
-  | { success: true; setName: string; title: string; codeTemplate: string; answers: string[]; studentAnswers: string[]; score: number | null }
+  | { success: true; setName: string; title: string; codeTemplate?: string; files?: ExamFileOut[]; answers: string[]; studentAnswers: string[]; score: number | null }
   | { success: false; error: string }
 
 // ── ข้อมูลสำหรับโหมดดูเฉลย — เปิดเผยเฉลยได้ก็ต่อเมื่อห้องสอบปิดแล้วจริง (เช็คซ้ำฝั่ง server ไม่เชื่อแค่ session.mode) ──
@@ -138,7 +144,7 @@ export async function getReviewData(): Promise<ReviewDataResult> {
   }
 
   const { data: row, error: rowErr } = await supabase.from('exam_questions')
-    .select('question, code, answers').eq('project_name', session.project_name).eq('set_name', setName).single()
+    .select('question, code, files, answers').eq('project_name', session.project_name).eq('set_name', setName).single()
   if (rowErr || !row) {
     return { success: false, error: `โหลดข้อสอบชุด "${setName}" ไม่สำเร็จ` }
   }
@@ -146,15 +152,20 @@ export async function getReviewData(): Promise<ReviewDataResult> {
   const { data: resultRow } = await supabase.from('exam_results')
     .select('student_answers, score').eq('student_id', session.student_id).eq('project_name', session.project_name).single()
 
-  return {
-    success: true,
+  const base = {
+    success: true as const,
     setName,
     title: row.question,
-    codeTemplate: row.code || '',
     answers: (row.answers as string[]) || [],
     studentAnswers: (resultRow?.student_answers as string[]) || [],
     score: resultRow?.score ?? null,
   }
+
+  if (row.files && Array.isArray(row.files) && row.files.length > 0) {
+    const files = (row.files as { filename: string; code: string }[]).map(f => ({ filename: f.filename, codeTemplate: f.code }))
+    return { ...base, files }
+  }
+  return { ...base, codeTemplate: row.code || '' }
 }
 
 type UseSuperTokenResult =

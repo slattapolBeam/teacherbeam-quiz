@@ -13,11 +13,7 @@ import {
 } from '@/app/actions/dashboard'
 import { signOutTeacher } from '@/app/actions/auth'
 
-const PROJECTS = [
-  { value: 'ExpenseNote', label: 'ExpenseNote (Kotlin)' },
-  { value: 'BasicPython', label: 'พื้นฐานภาษา Python' },
-  { value: 'MidtermExam', label: 'สอบกลางภาค (Midterm)' },
-]
+type Project = { value: string; label: string }
 
 type ExamRow = {
   room: string
@@ -35,7 +31,10 @@ export default function DashboardPage() {
   const supabase = createClient()
 
   // ── Project / room controls ────────────────────────────
-  const [projectFilter, setProjectFilter] = useState(PROJECTS[0].value)
+  // ดึงจากตาราง subjects จริง (ไม่ hardcode) — วิชาใหม่เพิ่มผ่าน Supabase แล้วโผล่ที่นี่ได้เลย ไม่ต้องแก้โค้ด
+  const [projects, setProjects] = useState<Project[]>([])
+  const [isLoadingProjects, setIsLoadingProjects] = useState(true)
+  const [projectFilter, setProjectFilter] = useState('')
   const [currentRoom, setCurrentRoom] = useState('ALL')
   const [sortMode, setSortMode] = useState<'default' | 'number'>('default')
   const [realtimeOn, setRealtimeOn] = useState(false)
@@ -61,7 +60,26 @@ export default function DashboardPage() {
   const [giveTokenListError, setGiveTokenListError] = useState('')
   const [tokenBusyId, setTokenBusyId] = useState<string | null>(null)
 
-  const projectLabel = PROJECTS.find(p => p.value === projectFilter)?.label || projectFilter
+  const projectLabel = projects.find(p => p.value === projectFilter)?.label || projectFilter
+
+  // ── โหลดรายชื่อวิชาจาก subjects table ─────────────────────
+  useEffect(() => {
+    (async () => {
+      setIsLoadingProjects(true)
+      try {
+        const { data, error } = await supabase.from('subjects')
+          .select('name, description').eq('is_active', true).order('name')
+        if (error) throw error
+        const list = (data || []).map((s: any) => ({ value: s.name, label: s.description || s.name }))
+        setProjects(list)
+        setProjectFilter(prev => prev || list[0]?.value || '')
+      } catch (err) {
+        console.error('โหลดรายชื่อวิชาไม่สำเร็จ:', err)
+      } finally {
+        setIsLoadingProjects(false)
+      }
+    })()
+  }, [])
 
   // ── Fetch results ──────────────────────────────────────
   async function fetchExamResults(project: string) {
@@ -117,6 +135,7 @@ export default function DashboardPage() {
   }
 
   useEffect(() => {
+    if (!projectFilter) return
     checkSessionStatus(projectFilter)
     fetchExamResults(projectFilter)
   }, [projectFilter])
@@ -420,9 +439,16 @@ export default function DashboardPage() {
                 <select
                   value={projectFilter}
                   onChange={e => setProjectFilter(e.target.value)}
-                  className="bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full sm:w-64 p-2.5 font-medium"
+                  disabled={isLoadingProjects || projects.length === 0}
+                  className="bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full sm:w-64 p-2.5 font-medium disabled:opacity-60"
                 >
-                  {PROJECTS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+                  {isLoadingProjects ? (
+                    <option>กำลังโหลด...</option>
+                  ) : projects.length === 0 ? (
+                    <option>ยังไม่มีวิชาในระบบ</option>
+                  ) : (
+                    projects.map(p => <option key={p.value} value={p.value}>{p.label}</option>)
+                  )}
                 </select>
               </div>
             </div>

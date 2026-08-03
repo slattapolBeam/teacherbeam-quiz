@@ -29,9 +29,16 @@ export interface ExamSession {
   created_at: string
 }
 
+export interface ExamFile {
+  filename: string
+  codeTemplate: string
+}
+
 export interface ExamSet {
   title: string
-  codeTemplate: string
+  // ชุดข้อสอบไฟล์เดียว (แบบเดิม) ใช้ codeTemplate — ชุดหลายไฟล์ใช้ files แทน ไม่ใช้พร้อมกันทั้งคู่
+  codeTemplate?: string
+  files?: ExamFile[]
   // ไม่มีค่าตอนสอบจริง (Phase 7.2: server ไม่ส่งเฉลยมาให้ client เห็นอีกต่อไป) มีเฉพาะตอนดูเฉลยหลังสอบ
   answers?: string[]
 }

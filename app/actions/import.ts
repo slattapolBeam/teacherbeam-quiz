@@ -4,14 +4,21 @@ import { createServiceClient } from '@/lib/supabase/server'
 import { requireTeacher } from '@/app/actions/auth'
 import { logActivity } from '@/lib/auditLog'
 
+type ExamFileRow = { filename: string; code: string }
+type BlankTypeRow = { type: 'dropdown'; choices: string[] } | null
+
 type ExamQuestionRow = {
   project_name: string
   set_name: string
   question_order: number
   type: string
   question: string
-  code: string
+  // ชุดไฟล์เดียว (เดิม) ใช้ code — ชุดหลายไฟล์ใช้ files แทน (อย่างใดอย่างหนึ่งเท่านั้น)
+  code: string | null
+  files: ExamFileRow[] | null
   answers: string[]
+  // ขนานกับ answers ทีละตำแหน่ง — null = ช่องเติมคำแบบเดิม
+  blank_types: BlankTypeRow[] | null
 }
 
 type ActionResult<T extends object = {}> = ({ success: true } & T) | { success: false; error: string }
@@ -74,6 +81,28 @@ export async function deleteExamQuestionSet(projectName: string, setName: string
       .delete().eq('project_name', projectName).eq('set_name', setName)
     if (error) throw error
     await logActivity({ type: 'teacher', id: teacher.email }, 'delete_exam_question_set', projectName, { setName })
+    return { success: true }
+  } catch (err: any) {
+    return { success: false, error: err.message }
+  }
+}
+
+// ── สร้างวิชาใหม่ ────────────────────────────────────────────
+export async function createSubject(name: string, description: string): Promise<ActionResult> {
+  const supabase = createServiceClient()
+  try {
+    const teacher = await requireTeacher()
+    const trimmedName = name.trim()
+    if (!trimmedName) return { success: false, error: 'กรุณาระบุชื่อวิชา' }
+
+    const { error } = await supabase.from('subjects')
+      .insert([{ name: trimmedName, description: description.trim() || null, is_active: true }])
+    if (error) {
+      if (error.code === '23505') throw new Error(`มีวิชาชื่อ "${trimmedName}" อยู่ในระบบแล้ว`)
+      throw error
+    }
+
+    await logActivity({ type: 'teacher', id: teacher.email }, 'create_subject', trimmedName)
     return { success: true }
   } catch (err: any) {
     return { success: false, error: err.message }
