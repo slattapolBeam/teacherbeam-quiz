@@ -10,6 +10,26 @@ import type { ActiveExamSession, ExamSet, ExamFile } from '@/types/exam'
 const DRAFT_SAVE_INTERVAL_MS = 30 * 1000
 const DRAFT_MAX_AGE_MS = 24 * 60 * 60 * 1000 // ร่างเก่าเกินไปไม่ควร auto-restore เผื่อกรณีอาจารย์ลบผลสอบแล้วให้สอบใหม่
 
+const BURST_COINS = Array.from({ length: 20 }, (_, i) => {
+  const angle = (i / 20) * Math.PI * 2
+  const dist = [160, 240, 310][i % 3]
+  return {
+    tx: `${Math.round(Math.cos(angle) * dist)}px`,
+    ty: `${Math.round(Math.sin(angle) * dist)}px`,
+    rot: `${(i % 2 === 0 ? 1 : -1) * (180 + i * 22)}deg`,
+    delay: `${(i * 0.022).toFixed(3)}s`,
+    size: [28, 38, 46, 34][i % 4],
+  }
+})
+
+const RAIN_COINS = Array.from({ length: 22 }, (_, i) => ({
+  left: `${(i * 4.7) % 100}%`,
+  dur: `${[1.7, 2.3, 2.8, 1.5, 2.1][i % 5]}s`,
+  delay: `${-(i * 0.38) % 3.5}s`,
+  size: [18, 26, 20, 30, 16][i % 5],
+  rot: `${i % 2 === 0 ? 360 : -360}deg`,
+}))
+
 function getDraftKey(session: ActiveExamSession, setName: string) {
   return `exam_draft_${session.student_id}_${session.project_name}_${setName}`
 }
@@ -584,11 +604,6 @@ export default function ExamPage() {
                   </p>
                 </div>
               </div>
-
-              {/* Reminder */}
-              <p className="text-xs text-center text-gray-400">
-                ⏱️ มีเวลา 15 นาที • ระบบบันทึกคำตอบอัตโนมัติทุก 30 วินาที
-              </p>
             </div>
 
             {/* Footer */}
@@ -606,22 +621,61 @@ export default function ExamPage() {
 
       {/* Gacha Modal */}
       {showGachaModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-gray-900/80 backdrop-blur-sm">
-          <div className="bg-white p-8 rounded-3xl shadow-2xl max-w-sm w-full mx-4 text-center">
-            <h2 className="text-2xl font-bold text-gray-900 mb-2">🎁 Mystery Drop!</h2>
-            <p className="text-gray-500 mb-6">ผู้สอนได้ทำการสุ่มแจกเหรียญรางวัลพิเศษ!</p>
-            <div className="flex justify-center mb-6 animate-bounce-gacha">
-              <img src="/gamecoin.png" className="w-24 h-24" alt="coin" />
+        <div className="fixed inset-0 z-[100] flex items-center justify-center overflow-hidden bg-gray-950/90">
+          {/* Gold flash overlay */}
+          <div className="gacha-flash absolute inset-0 bg-yellow-300/75 z-[101]" />
+
+          {/* Raining coins (background) */}
+          {RAIN_COINS.map((c, i) => (
+            <img
+              key={`rain-${i}`}
+              src="/gamecoin.png"
+              alt=""
+              className="gacha-rain-coin z-[102]"
+              style={{ left: c.left, width: c.size, height: c.size, '--dur': c.dur, '--delay': c.delay, '--rot': c.rot } as React.CSSProperties}
+            />
+          ))}
+
+          {/* Burst coins from center */}
+          {BURST_COINS.map((c, i) => (
+            <img
+              key={`burst-${i}`}
+              src="/gamecoin.png"
+              alt=""
+              className="gacha-burst-coin z-[103]"
+              style={{ width: c.size, height: c.size, '--tx': c.tx, '--ty': c.ty, '--rot': c.rot, '--delay': c.delay } as React.CSSProperties}
+            />
+          ))}
+
+          {/* Main card */}
+          <div className="gacha-card gacha-glow relative z-[104] bg-white rounded-3xl max-w-sm w-full mx-4 text-center overflow-hidden">
+            {/* Shimmering banner */}
+            <div className="gacha-banner py-4 px-6">
+              <p className="text-amber-900 font-black text-xl tracking-widest drop-shadow-sm">✨ เห่ยย โชคดีจังอ๊าาาาาาาาา ✨</p>
             </div>
-            <p className="text-lg font-semibold text-yellow-600 mb-6 bg-yellow-50 py-3 rounded-lg border border-yellow-200">
-              คุณได้รับ Super Token <span className="text-2xl font-bold">{gachaAmount}</span> เหรียญ
-            </p>
-            <button
-              onClick={() => setShowGachaModal(false)}
-              className="w-full py-3 bg-[#0071E3] hover:bg-[#0077ED] text-white font-medium rounded-xl transition shadow-lg active:scale-95"
-            >
-              รับรางวัลและทำข้อสอบต่อ
-            </button>
+
+            <div className="p-8 pb-7">
+              {/* Big spinning coin */}
+              <div className="flex justify-center mb-5">
+                <img src="/gamecoin.png" className="w-28 h-28 gacha-coin-bob drop-shadow-lg" alt="coin" />
+              </div>
+
+              {/* Message */}
+              <p className="gacha-text-in text-gray-500 text-sm mb-4">ผู้สอนได้สุ่มแจกเหรียญพิเศษให้คุณ!</p>
+
+              {/* Big amount */}
+              <div className="gacha-amount-in mb-7">
+                <span className="text-7xl font-black text-amber-500 leading-none">+{gachaAmount}</span>
+                <p className="text-gray-400 text-sm mt-2 tracking-wide">Super Token</p>
+              </div>
+
+              <button
+                onClick={() => setShowGachaModal(false)}
+                className="gacha-btn-in w-full py-3 bg-[#0071E3] hover:bg-[#0077ED] text-white font-semibold rounded-xl transition-all shadow-lg active:scale-95"
+              >
+                รับรางวัลและทำข้อสอบต่อ 🎉
+              </button>
+            </div>
           </div>
         </div>
       )}
