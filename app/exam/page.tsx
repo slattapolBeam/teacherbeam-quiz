@@ -22,7 +22,7 @@ export default function ExamPage() {
   const [currentExamSet, setCurrentExamSet] = useState<ExamSet | null>(null)
   const [currentSetName, setCurrentSetName] = useState('')
   const [loadError, setLoadError] = useState('')
-  const [timeLeft, setTimeLeft] = useState(15 * 60)
+  const [timeLeft, setTimeLeft] = useState(0)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [superTokens, setSuperTokens] = useState(0)
   const [hintsUsed, setHintsUsed] = useState(0)
@@ -34,11 +34,15 @@ export default function ExamPage() {
   const [gachaAmount, setGachaAmount] = useState(1)
   const [showSuccessModal, setShowSuccessModal] = useState(false)
   const [finalScore, setFinalScore] = useState(0)
+  const [showTutorial, setShowTutorial] = useState(false)
+  const [tutorialVisible, setTutorialVisible] = useState(false)
 
   // Refs for exam inputs (ต้องใช้ DOM จริง ๆ เพราะ codeTemplate เป็น HTML string)
   const codeContainerRef = useRef<HTMLDivElement>(null)
   const timerRef = useRef<NodeJS.Timeout | null>(null)
   const sessionRef = useRef<ActiveExamSession | null>(null)
+  // ref ชี้ไปที่ handleSubmit เวอร์ชันล่าสุดเสมอ — ใช้ใน force_submit listener เพื่อหลีกเลี่ยง stale closure
+  const handleSubmitRef = useRef<() => Promise<void>>(() => Promise.resolve())
 
   // นับจำนวนข้อจาก DOM โดยตรง (ไม่มี answers.length ให้ใช้ — เฉลยไม่ถูกส่งมาที่ client อีกต่อไป, Phase 7.2)
   function collectAnswersFromDom(): string[] {
@@ -94,11 +98,11 @@ export default function ExamPage() {
       .replace(
         /<button class="hint-btn" onclick="useHint\((\d+)\)">💡<\/button>/g,
         `<button class="hint-btn" onclick="window.__useHint($1)" title="ดูคำใบ้ (จำกัด 3 ครั้ง)">💡</button>
-         <button class="hint-btn super-btn" onclick="window.__useSuperToken($1)" title="ใช้ Super Token เติมคำตอบ">🌟</button>`
+         <button class="hint-btn super-btn" onclick="window.__useSuperToken($1)" title="ใช้ Super Token เติมคำตอบ"><img src="/gamecoin.png" style="width:18px;height:18px;display:inline;vertical-align:middle;" alt="coin" /></button>`
       )
       .replace(
         /<button class="hint-btn" onclick="useSuperToken\((\d+)\)">🌟<\/button>/g,
-        `<button class="hint-btn super-btn" onclick="window.__useSuperToken($1)" title="ใช้ Super Token เติมคำตอบ">🌟</button>`
+        `<button class="hint-btn super-btn" onclick="window.__useSuperToken($1)" title="ใช้ Super Token เติมคำตอบ"><img src="/gamecoin.png" style="width:18px;height:18px;display:inline;vertical-align:middle;" alt="coin" /></button>`
       )
   }
 
@@ -106,6 +110,7 @@ export default function ExamPage() {
   useEffect(() => {
     let tokenChannel: ReturnType<typeof supabase.channel> | null = null
     let gachaChannel: ReturnType<typeof supabase.channel> | null = null
+    let forceSubmitChannel: ReturnType<typeof supabase.channel> | null = null
     let cancelled = false
 
     const handleVisibility = () => {
@@ -128,9 +133,14 @@ export default function ExamPage() {
         setupReviewMode()
       } else {
         setupExam()
-        startTimer()
+        const totalSec = (activeSession.duration_minutes ?? 15) * 60
+        const elapsedSec = activeSession.session_started_at
+          ? Math.floor((Date.now() - new Date(activeSession.session_started_at).getTime()) / 1000)
+          : 0
+        startTimer(Math.max(10, totalSec - elapsedSec))
         tokenChannel = listenForSuperTokens(activeSession)
         gachaChannel = listenForGachaDrops(activeSession)
+        forceSubmitChannel = listenForForceSubmit(activeSession)
       }
 
       document.addEventListener('visibilitychange', handleVisibility)
@@ -142,6 +152,7 @@ export default function ExamPage() {
       if (timerRef.current) clearInterval(timerRef.current)
       if (tokenChannel) supabase.removeChannel(tokenChannel)
       if (gachaChannel) supabase.removeChannel(gachaChannel)
+      if (forceSubmitChannel) supabase.removeChannel(forceSubmitChannel)
     }
   }, [])
 
@@ -173,7 +184,16 @@ export default function ExamPage() {
 
       // กู้ร่างคำตอบที่เคย autosave ไว้ (ถ้ามี และยังไม่เก่าเกินไป)
       if (sessionRef.current) restoreDraft(sessionRef.current, result.setName)
+
+      // แสดง tutorial modal พร้อม fade-in
+      setShowTutorial(true)
+      requestAnimationFrame(() => requestAnimationFrame(() => setTutorialVisible(true)))
     }, 50)
+  }
+
+  function closeTutorial() {
+    setTutorialVisible(false)
+    setTimeout(() => setShowTutorial(false), 300)
   }
 
   // ── Setup Review Mode (server เช็คซ้ำว่าห้องสอบปิดแล้วจริง ก่อนส่งเฉลยมาให้) ──
@@ -233,8 +253,9 @@ export default function ExamPage() {
   }
 
   // ── Timer ───────────────────────────────────────────────
-  function startTimer() {
-    let time = 15 * 60
+  function startTimer(totalSeconds: number) {
+    let time = totalSeconds
+    setTimeLeft(time)
     timerRef.current = setInterval(() => {
       time--
       setTimeLeft(time)
@@ -287,7 +308,7 @@ export default function ExamPage() {
         alert('❌ คุณไม่มี Super Token เหลือแล้ว! (อาจารย์อาจจะสุ่มแจกให้ในระหว่างการสอบ)')
         return
       }
-      if (!confirm(`คุณมีเหรียญ🌟 ${superTokens} เหรียญ\nต้องการใช้ 1 เหรียญ เพื่อเติมคำตอบข้อนี้ทันทีหรือไม่?`)) return
+      if (!confirm(`คุณมีเหรียญ ${superTokens} เหรียญ\nต้องการใช้ 1 เหรียญ เพื่อเติมคำตอบข้อนี้ทันทีหรือไม่?`)) return
       if (!currentSetName) return
 
       // เฉลยข้อนี้ดึงฝั่ง server ตอนใช้เหรียญเท่านั้น (Phase 7.2)
@@ -348,6 +369,13 @@ export default function ExamPage() {
       }).subscribe()
   }
 
+  function listenForForceSubmit(_activeSession: ActiveExamSession) {
+    return supabase.channel('exam-broadcast')
+      .on('broadcast', { event: 'force_submit' }, () => {
+        handleSubmitRef.current()
+      }).subscribe()
+  }
+
   // ── Submit ───────────────────────────────────────────────
   async function handleSubmit() {
     if (!currentExamSet || !session) return
@@ -373,6 +401,8 @@ export default function ExamPage() {
     setShowSuccessModal(true)
     setIsSubmitting(false)
   }
+  // อัพเดต ref ทุก render เพื่อให้ force_submit listener ได้ handleSubmit เวอร์ชันล่าสุดเสมอ
+  handleSubmitRef.current = handleSubmit
 
   async function logoutAndExit() {
     await clearExamSession()
@@ -429,7 +459,7 @@ export default function ExamPage() {
 
             <div className="flex items-center gap-4">
               <div className="hidden sm:flex items-center gap-1.5 bg-yellow-50 px-3 py-1.5 rounded-full border border-yellow-200 shadow-sm">
-                <span className="text-lg">🌟</span>
+                <img src="/gamecoin.png" className="w-6 h-6" alt="coin" />
                 <span className="font-bold text-yellow-700 text-lg">{superTokens}</span>
               </div>
               <div className="hidden md:block text-right">
@@ -512,13 +542,77 @@ export default function ExamPage() {
         </div>
       </main>
 
+      {/* Tutorial Modal */}
+      {showTutorial && (
+        <div
+          className="fixed inset-0 z-[90] flex items-center justify-center bg-gray-900/70 backdrop-blur-sm transition-opacity duration-300"
+          style={{ opacity: tutorialVisible ? 1 : 0 }}
+        >
+          <div
+            className="bg-white rounded-3xl shadow-2xl max-w-md w-full mx-4 overflow-hidden transition-all duration-300"
+            style={{ transform: tutorialVisible ? 'scale(1) translateY(0)' : 'scale(0.95) translateY(16px)', opacity: tutorialVisible ? 1 : 0 }}
+          >
+            {/* Header */}
+            <div className="bg-gradient-to-r from-blue-600 to-blue-500 px-6 py-5 text-white text-center">
+              <div className="text-3xl mb-1">📋</div>
+              <h2 className="text-xl font-bold">คำแนะนำการสอบ</h2>
+              <p className="text-blue-100 text-sm mt-1">อ่านก่อนเริ่มทำข้อสอบ</p>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 space-y-4">
+              {/* Hint */}
+              <div className="flex gap-4 items-start bg-blue-50 rounded-2xl p-4 border border-blue-100">
+                <div className="text-2xl shrink-0 mt-0.5">💡</div>
+                <div>
+                  <p className="font-semibold text-gray-900 mb-1">คำใบ้ปกติ (3 ครั้ง/ชุด)</p>
+                  <p className="text-sm text-gray-600 leading-relaxed">
+                    กดปุ่ม 💡 ข้างช่องเติมคำ ระบบจะ<span className="font-medium text-blue-700">เติม 2 ตัวอักษรแรก</span>ของคำตอบให้เป็นคำใบ้ ใช้ได้สูงสุด 3 ครั้งต่อชุดข้อสอบ
+                  </p>
+                </div>
+              </div>
+
+              {/* Super Token */}
+              <div className="flex gap-4 items-start bg-yellow-50 rounded-2xl p-4 border border-yellow-100">
+                <div className="shrink-0 mt-0.5">
+                  <img src="/gamecoin.png" className="w-7 h-7" alt="coin" />
+                </div>
+                <div>
+                  <p className="font-semibold text-gray-900 mb-1">Super Token (เหรียญรางวัล)</p>
+                  <p className="text-sm text-gray-600 leading-relaxed">
+                    กดปุ่มเหรียญข้างช่องเติมคำ ระบบจะ<span className="font-medium text-yellow-700">เติมคำตอบที่ถูกต้องให้ทันที</span> เหรียญได้รับจากอาจารย์ระหว่างการสอบ ใช้อย่างฉลาด!
+                  </p>
+                </div>
+              </div>
+
+              {/* Reminder */}
+              <p className="text-xs text-center text-gray-400">
+                ⏱️ มีเวลา 15 นาที • ระบบบันทึกคำตอบอัตโนมัติทุก 30 วินาที
+              </p>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 pb-6">
+              <button
+                onClick={closeTutorial}
+                className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-semibold rounded-2xl transition-all duration-150 shadow-lg shadow-blue-500/25"
+              >
+                เข้าใจแล้ว เริ่มทำข้อสอบเลย!
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Gacha Modal */}
       {showGachaModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-gray-900/80 backdrop-blur-sm">
           <div className="bg-white p-8 rounded-3xl shadow-2xl max-w-sm w-full mx-4 text-center">
             <h2 className="text-2xl font-bold text-gray-900 mb-2">🎁 Mystery Drop!</h2>
             <p className="text-gray-500 mb-6">ผู้สอนได้ทำการสุ่มแจกเหรียญรางวัลพิเศษ!</p>
-            <div className="text-7xl mb-6 animate-bounce-gacha">🌟</div>
+            <div className="flex justify-center mb-6 animate-bounce-gacha">
+              <img src="/gamecoin.png" className="w-24 h-24" alt="coin" />
+            </div>
             <p className="text-lg font-semibold text-yellow-600 mb-6 bg-yellow-50 py-3 rounded-lg border border-yellow-200">
               คุณได้รับ Super Token <span className="text-2xl font-bold">{gachaAmount}</span> เหรียญ
             </p>

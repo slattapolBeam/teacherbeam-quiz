@@ -416,7 +416,7 @@ export default function LoginPage() {
               onClick={() => setShowTokenModal(true)}
               className="text-sm text-yellow-600 font-medium hover:text-yellow-700 flex items-center justify-center gap-1 mx-auto transition bg-yellow-50 px-4 py-2 rounded-full"
             >
-              <span>🌟</span> เช็กยอด Super Token ของฉัน
+              <img src="/gamecoin.png" alt="Super Token" className="inline w-5 h-5" /> เช็กยอด Super Token ของฉัน
             </button>
           </div>
         )}
@@ -425,7 +425,7 @@ export default function LoginPage() {
       {showTokenModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
           <div className="bg-white p-8 rounded-3xl shadow-2xl max-w-sm w-full mx-4 text-center animate-in fade-in zoom-in-95 duration-200">
-            <div className="text-5xl mb-4">🌟</div>
+            <div className="mb-4"><img src="/gamecoin.png" alt="Super Token" className="w-16 h-16 mx-auto" /></div>
             <h2 className="text-xl font-bold text-gray-900 mb-2">เช็ก Super Token</h2>
             <input
               type="text"

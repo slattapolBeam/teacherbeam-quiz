@@ -50,7 +50,7 @@ function buildFileCode(template: string, answers: string[], blankTypes: BlankTyp
         errorMsg = `ช่องที่ ${index} (dropdown): เฉลย "${answer}" ไม่อยู่ในตัวเลือก [${meta.choices.join(', ')}]`
       }
       const options = meta.choices.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')
-      html = `<select class="code-input code-select" id="q${index}"><option value="">-- เลือก --</option>${options}</select><button class="hint-btn" onclick="useSuperToken(${index})">🌟</button>`
+      html = `<select class="code-input code-select" id="q${index}"><option value="">-- เลือก --</option>${options}</select><button class="hint-btn" onclick="useSuperToken(${index})"><img src="/gamecoin.png" alt="coin" style="width:1em;height:1em;display:inline;vertical-align:middle" /></button>`
     } else {
       const width = Math.max(60, (answer?.length || 4) * 11 + 40)
       html = `<input type="text" class="code-input" style="width: ${width}px;" id="q${index}"><button class="hint-btn" onclick="useHint(${index})">💡</button>`

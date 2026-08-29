@@ -58,6 +58,8 @@ export async function startExamSession(studentId: string, pin: string): Promise<
     got_gacha: false,
     gacha_amount: 0,
     hints_used: 0,
+    duration_minutes: sessionRow.duration_minutes ?? 15,
+    session_started_at: sessionRow.created_at,
   }
 
   await setSessionCookie(session)

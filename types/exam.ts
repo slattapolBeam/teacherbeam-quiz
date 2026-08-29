@@ -10,6 +10,8 @@ export interface ActiveExamSession {
   got_gacha: boolean
   gacha_amount: number
   hints_used?: number
+  duration_minutes?: number
+  session_started_at?: string
 }
 
 export interface Student {

@@ -7,7 +7,7 @@ import { logActivity } from '@/lib/auditLog'
 type ActionResult<T extends object = {}> = ({ success: true } & T) | { success: false; error: string }
 
 // ── PIN management ────────────────────────────────────────
-export async function generatePin(projectName: string): Promise<ActionResult<{ pin: string }>> {
+export async function generatePin(projectName: string, durationMinutes: number): Promise<ActionResult<{ pin: string }>> {
   const supabase = createServiceClient()
   try {
     const teacher = await requireTeacher()
@@ -20,10 +20,10 @@ export async function generatePin(projectName: string): Promise<ActionResult<{ p
 
     // exam_sessions ไม่มี unique constraint บน project_name จึงต้อง insert ไม่ใช่ upsert
     const { error: insertErr } = await supabase.from('exam_sessions')
-      .insert([{ project_name: projectName, pin_code: pin, is_active: true }])
+      .insert([{ project_name: projectName, pin_code: pin, is_active: true, duration_minutes: durationMinutes }])
     if (insertErr) throw insertErr
 
-    await logActivity({ type: 'teacher', id: teacher.email }, 'generate_pin', projectName, { pin })
+    await logActivity({ type: 'teacher', id: teacher.email }, 'generate_pin', projectName, { pin, durationMinutes })
     return { success: true, pin }
   } catch (err: any) {
     return { success: false, error: err.message }
@@ -37,6 +37,13 @@ export async function closeSession(projectName: string): Promise<ActionResult> {
     const { error } = await supabase.from('exam_sessions')
       .update({ is_active: false }).eq('project_name', projectName).eq('is_active', true)
     if (error) throw error
+
+    // แจ้ง client ทุกเครื่องที่กำลังสอบอยู่ให้ส่งคำตอบทันที
+    const ch = supabase.channel('exam-broadcast')
+    await ch.subscribe()
+    await ch.send({ type: 'broadcast', event: 'force_submit', payload: { projectName } })
+    await supabase.removeChannel(ch)
+
     await logActivity({ type: 'teacher', id: teacher.email }, 'close_session', projectName)
     return { success: true }
   } catch (err: any) {
@@ -186,6 +193,75 @@ export async function deleteExamResult(studentId: string, projectName: string): 
     if (error) throw error
     await logActivity({ type: 'teacher', id: teacher.email }, 'delete_exam_result', studentId, { projectName })
     return { success: true }
+  } catch (err: any) {
+    return { success: false, error: err.message }
+  }
+}
+
+// ── Import นักศึกษา (upsert ตาม student_id) ─────────────────
+export type ImportStudentRow = {
+  student_id: string
+  first_name: string
+  last_name: string
+  room: string
+  class_number: number
+}
+
+export async function importStudents(
+  rows: ImportStudentRow[]
+): Promise<ActionResult<{ count: number }>> {
+  const supabase = createServiceClient()
+  try {
+    const teacher = await requireTeacher()
+
+    if (!rows || rows.length === 0) {
+      return { success: false, error: 'ไม่มีข้อมูลนักศึกษาให้นำเข้า' }
+    }
+    const invalid = rows.find(r => !r.student_id || !r.first_name || !r.room)
+    if (invalid) {
+      return { success: false, error: `พบแถวข้อมูลไม่ครบ (รหัส/ชื่อ/ห้อง): ${JSON.stringify(invalid)}` }
+    }
+
+    // upsert ตาม student_id ที่ต้องมี unique constraint อยู่แล้วในตาราง students
+    const { error } = await supabase.from('students')
+      .upsert(rows, { onConflict: 'student_id' })
+    if (error) throw error
+
+    await logActivity({ type: 'teacher', id: teacher.email }, 'import_students', 'bulk', {
+      count: rows.length,
+      rooms: [...new Set(rows.map(r => r.room))],
+    })
+    return { success: true, count: rows.length }
+  } catch (err: any) {
+    return { success: false, error: err.message }
+  }
+}
+
+// ── ลบนักศึกษารายคน ──────────────────────────────────────────
+export async function deleteStudent(studentId: string): Promise<ActionResult> {
+  const supabase = createServiceClient()
+  try {
+    const teacher = await requireTeacher()
+    const { error } = await supabase.from('students').delete().eq('student_id', studentId)
+    if (error) throw error
+    await logActivity({ type: 'teacher', id: teacher.email }, 'delete_student', studentId)
+    return { success: true }
+  } catch (err: any) {
+    return { success: false, error: err.message }
+  }
+}
+
+// ── ลบนักศึกษาทั้งห้อง ────────────────────────────────────────
+export async function deleteRoom(room: string): Promise<ActionResult<{ count: number }>> {
+  const supabase = createServiceClient()
+  try {
+    const teacher = await requireTeacher()
+    const { data, error } = await supabase.from('students')
+      .delete().eq('room', room).select('student_id')
+    if (error) throw error
+    const count = data?.length || 0
+    await logActivity({ type: 'teacher', id: teacher.email }, 'delete_room', room, { count })
+    return { success: true, count }
   } catch (err: any) {
     return { success: false, error: err.message }
   }
