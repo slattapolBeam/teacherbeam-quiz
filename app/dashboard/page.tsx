@@ -29,7 +29,35 @@ type ExamRow = {
   timestamp: string
 }
 
-type GiveTokenRow = ExamRow & { tokens: number } 
+type GiveTokenRow = ExamRow & { tokens: number }
+
+type BtnVariant = 'ghost' | 'primary' | 'yellow' | 'green' | 'danger' | 'active'
+type MBtnVariant = 'cancel' | 'primary' | 'yellow' | 'green' | 'indigo'
+
+function btn(variant: BtnVariant, extra = '') {
+  const base = 'inline-flex items-center gap-2 px-4 py-2.5 font-medium rounded-xl transition active:scale-95 text-sm shadow-sm'
+  const v: Record<BtnVariant, string> = {
+    ghost:   'bg-white border border-gray-200 hover:bg-gray-50 text-gray-700',
+    primary: 'bg-[#0071E3] hover:bg-[#0077ED] text-white shadow-blue-500/10',
+    yellow:  'bg-yellow-50 border border-yellow-200 hover:bg-yellow-100 text-yellow-700',
+    green:   'bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 text-emerald-700',
+    danger:  'bg-white border border-gray-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 text-gray-700',
+    active:  'bg-blue-50 border border-blue-200 text-blue-700',
+  }
+  return `${base} ${v[variant]}${extra ? ' ' + extra : ''}`
+}
+
+function mbtn(variant: MBtnVariant, extra = '') {
+  const base = 'py-3 font-medium rounded-xl transition'
+  const v: Record<MBtnVariant, string> = {
+    cancel:  'bg-gray-100 hover:bg-gray-200 text-gray-700',
+    primary: 'bg-[#0071E3] hover:bg-[#0077ED] text-white',
+    yellow:  'bg-yellow-500 hover:bg-yellow-600 text-white',
+    green:   'bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white active:scale-95',
+    indigo:  'bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-md',
+  }
+  return `${base} ${v[variant]}${extra ? ' ' + extra : ''}`
+}
 
 export default function DashboardPage() {
   const supabase = createClient()
@@ -573,41 +601,11 @@ export default function DashboardPage() {
             <h1 className="text-3xl font-semibold tracking-tight text-gray-900 mt-2">Coding Quiz Portal 📊</h1>
           </div>
 
-          <div className="mt-4 md:mt-0 flex flex-wrap gap-3">
-            <button
-              onClick={() => setSortMode(m => (m === 'default' ? 'number' : 'default'))}
-              className={`inline-flex items-center gap-2 px-4 py-2.5 border rounded-xl transition active:scale-95 text-sm shadow-sm font-medium ${sortMode === 'number' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white border-gray-200 hover:bg-gray-50 text-gray-700'}`}
-            >
-              {sortMode === 'number' ? '🏆 เรียงตามคะแนน' : '🔢 เรียงตามเลขที่'}
-            </button>
-            <button
-              onClick={() => fetchExamResults(projectFilter)}
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 font-medium rounded-xl transition active:scale-95 text-sm shadow-sm"
-            >
-              🔄 รีเฟรช
-            </button>
-            <button
-              onClick={openGiveTokenModal}
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-yellow-50 border border-yellow-200 hover:bg-yellow-100 text-yellow-700 font-medium rounded-xl transition active:scale-95 text-sm shadow-sm"
-            >
-              <img src="/gamecoin.png" alt="" className="inline w-4 h-4" /> แจก Super Token รายคน
-            </button>
-            <button
-              onClick={openManageStudentsModal}
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 text-emerald-700 font-medium rounded-xl transition active:scale-95 text-sm shadow-sm"
-            >
+          <div className="mt-4 md:mt-0 flex items-center gap-3">
+            <button onClick={openManageStudentsModal} className={btn('green')}>
               📥 นำเข้า/จัดการนักศึกษา
             </button>
-            <button
-              onClick={exportToCSV}
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-[#0071E3] hover:bg-[#0077ED] text-white font-medium rounded-xl transition active:scale-95 text-sm shadow-sm shadow-blue-500/10"
-            >
-              📥 ดาวน์โหลด CSV
-            </button>
-            <button
-              onClick={() => signOutTeacher()}
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-white border border-gray-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 text-gray-700 font-medium rounded-xl transition active:scale-95 text-sm shadow-sm"
-            >
+            <button onClick={() => signOutTeacher()} className={btn('danger')}>
               🚪 ออกจากระบบ
             </button>
           </div>
@@ -812,6 +810,13 @@ export default function DashboardPage() {
                 </button>
               </div>
             )}
+            <button
+              onClick={openGiveTokenModal}
+              title="แจก Super Token ให้นักศึกษาทีละคน"
+              className="px-4 py-2 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-700 text-sm font-medium rounded-xl transition active:scale-95 flex items-center gap-2 shrink-0"
+            >
+              <img src="/gamecoin.png" alt="" className="w-4 h-4" /> แจกรายคน
+            </button>
           </div>
         </div>
 
@@ -838,6 +843,22 @@ export default function DashboardPage() {
 
         {/* Score table */}
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+            <h2 className="text-sm font-semibold text-gray-700">ตารางคะแนน
+              <span className="ml-2 text-xs font-normal text-gray-400">({filteredData.length} คน)</span>
+            </h2>
+            <div className="flex items-center gap-2">
+              <button onClick={() => setSortMode(m => (m === 'default' ? 'number' : 'default'))} className={btn(sortMode === 'number' ? 'active' : 'ghost')}>
+                {sortMode === 'number' ? '🏆 เรียงคะแนน' : '🔢 เรียงเลขที่'}
+              </button>
+              <button onClick={() => fetchExamResults(projectFilter)} className={btn('ghost')}>
+                🔄 รีเฟรช
+              </button>
+              <button onClick={exportToCSV} className={btn('primary')}>
+                📥 CSV
+              </button>
+            </div>
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse min-w-[800px]">
               <thead>
@@ -928,18 +949,8 @@ export default function DashboardPage() {
               placeholder="เช่น 3"
             />
             <div className="flex gap-3 mt-5">
-              <button
-                onClick={() => setShowGachaCountModal(false)}
-                className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-xl transition"
-              >
-                ยกเลิก
-              </button>
-              <button
-                onClick={distributeSuperTokens}
-                className="flex-1 py-3 bg-yellow-500 hover:bg-yellow-600 text-white font-medium rounded-xl transition"
-              >
-                สุ่มแจก
-              </button>
+              <button onClick={() => setShowGachaCountModal(false)} className={`flex-1 ${mbtn('cancel')}`}>ยกเลิก</button>
+              <button onClick={distributeSuperTokens} className={`flex-1 ${mbtn('yellow')}`}>สุ่มแจก</button>
             </div>
           </div>
         </div>
@@ -966,18 +977,8 @@ export default function DashboardPage() {
               <span className="text-gray-500 font-medium text-lg shrink-0">นาที</span>
             </div>
             <div className="flex gap-3 mt-5">
-              <button
-                onClick={() => setShowDurationModal(false)}
-                className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-xl transition"
-              >
-                ยกเลิก
-              </button>
-              <button
-                onClick={confirmOpenSession}
-                className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl transition shadow-md"
-              >
-                เปิดห้องสอบ
-              </button>
+              <button onClick={() => setShowDurationModal(false)} className={`flex-1 ${mbtn('cancel')}`}>ยกเลิก</button>
+              <button onClick={confirmOpenSession} className={`flex-1 ${mbtn('indigo')}`}>เปิดห้องสอบ</button>
             </div>
           </div>
         </div>
@@ -1043,9 +1044,7 @@ export default function DashboardPage() {
               })}
             </div>
             <div className="p-4 border-t border-gray-100">
-              <button onClick={closeGiveTokenModal} className="w-full py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-xl transition">
-                ปิดหน้าต่าง
-              </button>
+              <button onClick={closeGiveTokenModal} className={`w-full ${mbtn('cancel')}`}>ปิดหน้าต่าง</button>
             </div>
           </div>
         </div>
@@ -1134,11 +1133,7 @@ export default function DashboardPage() {
                     <p className="text-sm text-green-600 font-medium">{importDoneMsg}</p>
                   )}
 
-                  <button
-                    onClick={submitImportStudents}
-                    disabled={isImporting || importRows.length === 0}
-                    className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-medium rounded-xl transition active:scale-95"
-                  >
+                  <button onClick={submitImportStudents} disabled={isImporting || importRows.length === 0} className={`w-full ${mbtn('green')}`}>
                     {isImporting ? '⏳ กำลังนำเข้า...' : `⬆️ นำเข้านักศึกษา ${importRows.length > 0 ? `(${importRows.length} คน)` : ''}`}
                   </button>
                 </div>
@@ -1217,9 +1212,7 @@ export default function DashboardPage() {
             </div>
 
             <div className="p-4 border-t border-gray-100">
-              <button onClick={() => setShowManageStudentsModal(false)} className="w-full py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-xl transition">
-                ปิดหน้าต่าง
-              </button>
+              <button onClick={() => setShowManageStudentsModal(false)} className={`w-full ${mbtn('cancel')}`}>ปิดหน้าต่าง</button>
             </div>
           </div>
         </div>
