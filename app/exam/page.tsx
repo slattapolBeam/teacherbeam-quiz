@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { submitExam, useSuperToken, useHint, getExamQuestionForStudent, getReviewData } from '@/app/actions/exam'
 import { getExamSession, clearExamSession } from '@/app/actions/session'
-import { initiateHeist } from '@/app/actions/heist'
+import { initiateHeist, getPendingHeistForVictim } from '@/app/actions/heist'
 import { HeistAttackerModal, HeistVictimModal } from '@/components/exam/HeistModal'
 import type { ActiveExamSession, ExamSet, ExamFile } from '@/types/exam'
 
@@ -64,6 +64,7 @@ export default function ExamPage() {
   type HeistVictimInfo = { heistId: number; snippet: string; attackerName: string; deadline: string }
   const [heistAttacking, setHeistAttacking] = useState<HeistAttackerInfo | null>(null)
   const [heistIncoming, setHeistIncoming] = useState<HeistVictimInfo | null>(null)
+  const heistIncomingRef = useRef<HeistVictimInfo | null>(null)
   const [heistLoading, setHeistLoading] = useState(false)
   const [heistErrorMsg, setHeistErrorMsg] = useState('')
   const [showHeistInfo, setShowHeistInfo] = useState(false)
@@ -381,6 +382,20 @@ export default function ExamPage() {
     const intervalId = setInterval(() => saveDraft(session, currentSetName), DRAFT_SAVE_INTERVAL_MS)
     return () => clearInterval(intervalId)
   }, [session, currentSetName, showSuccessModal])
+
+  // ── Sync heistIncoming → ref (ให้ interval callback อ่านค่าล่าสุดได้) ──
+  useEffect(() => { heistIncomingRef.current = heistIncoming }, [heistIncoming])
+
+  // ── Fallback poll: จับ heist ที่ broadcast พลาด (ทุก 2 วิ) ────────────
+  useEffect(() => {
+    if (!session || session.mode !== 'exam' || showSuccessModal) return
+    const poll = setInterval(async () => {
+      if (heistIncomingRef.current) return
+      const pending = await getPendingHeistForVictim()
+      if (pending && !heistIncomingRef.current) setHeistIncoming(pending)
+    }, 2000)
+    return () => clearInterval(poll)
+  }, [session, showSuccessModal])
 
   // ── Realtime ─────────────────────────────────────────────
   function listenForSuperTokens(activeSession: ActiveExamSession) {

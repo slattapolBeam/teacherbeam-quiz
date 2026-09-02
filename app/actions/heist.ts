@@ -133,12 +133,10 @@ export async function initiateHeist(): Promise<InitiateResult> {
     return { success: false, error: `บันทึกการปล้นไม่สำเร็จ: ${heistErr?.message ?? 'ไม่มีข้อมูลแถว'}` }
   }
 
-  // 9. Broadcast to victim via Realtime
+  // 9. Broadcast to victim via HTTP (no subscribe — avoids WebSocket race in server actions)
   const deadline = new Date(Date.now() + heistWindowMs).toISOString()
   try {
-    const ch = supabase.channel('heist-broadcast')
-    await ch.subscribe()
-    await ch.send({
+    await supabase.channel('heist-broadcast').send({
       type: 'broadcast', event: 'heist_attack',
       payload: {
         victim_id: victim.student_id,
@@ -148,9 +146,8 @@ export async function initiateHeist(): Promise<InitiateResult> {
         deadline,
       },
     })
-    await supabase.removeChannel(ch)
   } catch {
-    // broadcast failure is non-fatal — victim won't get popup; attacker resolves after timeout
+    // non-fatal — victim fallback-polls every 2 s anyway
   }
 
   await logActivity({ type: 'student', id: student_id }, 'heist_initiated', project_name, {
@@ -271,4 +268,46 @@ export async function defendHeist(heistId: number, typedText: string): Promise<D
   })
 
   return { success: true, defended: true }
+}
+
+// ─────────────────────────────────────────────
+// POLL — victim polls every ~2 s as fallback for missed broadcast
+// ─────────────────────────────────────────────
+export type PendingHeistInfo = {
+  heistId: number
+  snippet: string
+  attackerName: string
+  deadline: string
+} | null
+
+export async function getPendingHeistForVictim(): Promise<PendingHeistInfo> {
+  const session = await getExamSession()
+  if (!session || session.mode !== 'exam') return null
+
+  const supabase = createServiceClient()
+  const windowMs = (session.heist_window_seconds ?? 10) * 1000
+  const cutoff = new Date(Date.now() - windowMs - 1000).toISOString()
+
+  const { data: row } = await supabase
+    .from('token_heist_log')
+    .select('id, snippet, created_at, attacker_id')
+    .eq('victim_id', session.student_id)
+    .eq('outcome', 'pending')
+    .gte('created_at', cutoff)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (!row) return null
+
+  const { data: attacker } = await supabase
+    .from('students').select('first_name, last_name')
+    .eq('student_id', row.attacker_id).single()
+
+  return {
+    heistId: row.id,
+    snippet: row.snippet,
+    attackerName: attacker ? `${attacker.first_name} ${attacker.last_name}` : 'ผู้โจมตี',
+    deadline: new Date(new Date(row.created_at).getTime() + windowMs).toISOString(),
+  }
 }

@@ -236,6 +236,11 @@ export function HeistVictimModal({ heistId, snippet, attackerName, deadline, onD
               value={typed}
               onChange={e => setTyped(e.target.value)}
               onKeyDown={handleKey}
+              onPaste={e => e.preventDefault()}
+              onCopy={e => e.preventDefault()}
+              onCut={e => e.preventDefault()}
+              onDrop={e => e.preventDefault()}
+              onContextMenu={e => e.preventDefault()}
               disabled={phase === 'submitting'}
               placeholder="พิมพ์ที่นี่..."
               className={`w-full border-2 rounded-xl px-4 py-3 font-mono text-sm outline-none transition mb-3 ${
