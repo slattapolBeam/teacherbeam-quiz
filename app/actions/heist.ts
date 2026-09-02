@@ -4,7 +4,7 @@ import { createServiceClient } from '@/lib/supabase/server'
 import { getExamSession } from '@/app/actions/session'
 import { logActivity } from '@/lib/auditLog'
 
-const HEIST_WINDOW_MS = 7_000
+const HEIST_WINDOW_MS = 10_000
 const TOLERANCE_MS = 500      // server-side grace for victim defense
 const COOLDOWN_MS = 30_000
 const MAX_PER_SESSION = 5

@@ -17,7 +17,7 @@ interface AttackerProps {
 type AttackerPhase = 'countdown' | 'resolving' | 'success' | 'defended'
 
 export function HeistAttackerModal({ heistId, snippet, victimName, onDone }: AttackerProps) {
-  const TOTAL = 7.5
+  const TOTAL = 10
   const [secsLeft, setSecsLeft] = useState(TOTAL)
   const [phase, setPhase] = useState<AttackerPhase>('countdown')
   const [gained, setGained] = useState(0)
