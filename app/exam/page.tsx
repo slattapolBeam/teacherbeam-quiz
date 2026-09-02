@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { submitExam, useSuperToken, useHint, getExamQuestionForStudent, getReviewData } from '@/app/actions/exam'
 import { getExamSession, clearExamSession } from '@/app/actions/session'
+import { initiateHeist } from '@/app/actions/heist'
+import { HeistAttackerModal, HeistVictimModal } from '@/components/exam/HeistModal'
 import type { ActiveExamSession, ExamSet, ExamFile } from '@/types/exam'
 
 const DRAFT_SAVE_INTERVAL_MS = 30 * 1000
@@ -56,6 +58,15 @@ export default function ExamPage() {
   const [finalScore, setFinalScore] = useState(0)
   const [showTutorial, setShowTutorial] = useState(false)
   const [tutorialVisible, setTutorialVisible] = useState(false)
+
+  // Heist states
+  type HeistAttackerInfo = { heistId: number; snippet: string; victimName: string }
+  type HeistVictimInfo = { heistId: number; snippet: string; attackerName: string; deadline: string }
+  const [heistAttacking, setHeistAttacking] = useState<HeistAttackerInfo | null>(null)
+  const [heistIncoming, setHeistIncoming] = useState<HeistVictimInfo | null>(null)
+  const [heistLoading, setHeistLoading] = useState(false)
+  const [heistErrorMsg, setHeistErrorMsg] = useState('')
+  const [showHeistInfo, setShowHeistInfo] = useState(false)
 
   // Refs for exam inputs (ต้องใช้ DOM จริง ๆ เพราะ codeTemplate เป็น HTML string)
   const codeContainerRef = useRef<HTMLDivElement>(null)
@@ -131,6 +142,7 @@ export default function ExamPage() {
     let tokenChannel: ReturnType<typeof supabase.channel> | null = null
     let gachaChannel: ReturnType<typeof supabase.channel> | null = null
     let forceSubmitChannel: ReturnType<typeof supabase.channel> | null = null
+    let heistChannel: ReturnType<typeof supabase.channel> | null = null
     let cancelled = false
 
     const handleVisibility = () => {
@@ -161,6 +173,7 @@ export default function ExamPage() {
         tokenChannel = listenForSuperTokens(activeSession)
         gachaChannel = listenForGachaDrops(activeSession)
         forceSubmitChannel = listenForForceSubmit(activeSession)
+        heistChannel = listenForHeistAttacks(activeSession)
       }
 
       document.addEventListener('visibilitychange', handleVisibility)
@@ -173,6 +186,7 @@ export default function ExamPage() {
       if (tokenChannel) supabase.removeChannel(tokenChannel)
       if (gachaChannel) supabase.removeChannel(gachaChannel)
       if (forceSubmitChannel) supabase.removeChannel(forceSubmitChannel)
+      if (heistChannel) supabase.removeChannel(heistChannel)
     }
   }, [])
 
@@ -396,6 +410,32 @@ export default function ExamPage() {
       }).subscribe()
   }
 
+  function listenForHeistAttacks(activeSession: ActiveExamSession) {
+    return supabase.channel('heist-broadcast')
+      .on('broadcast', { event: 'heist_attack' }, (msg: any) => {
+        const p = msg.payload || {}
+        if (p.victim_id !== activeSession.student_id) return
+        setHeistIncoming({
+          heistId: p.heist_id,
+          snippet: p.snippet,
+          attackerName: p.attacker_name,
+          deadline: p.deadline,
+        })
+      }).subscribe()
+  }
+
+  async function handleInitiateHeist() {
+    if (heistLoading || heistAttacking) return
+    setHeistLoading(true)
+    const result = await initiateHeist()
+    setHeistLoading(false)
+    if (!result.success) {
+      setHeistErrorMsg(result.error)
+      return
+    }
+    setHeistAttacking({ heistId: result.heistId, snippet: result.snippet, victimName: result.victimName })
+  }
+
   // ── Submit ───────────────────────────────────────────────
   async function handleSubmit() {
     if (!currentExamSet || !session) return
@@ -477,7 +517,27 @@ export default function ExamPage() {
               </div>
             )}
 
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
+              {!isReview && !heistAttacking && !heistIncoming && (
+                <div className="hidden sm:flex items-center gap-1">
+                  <button
+                    onClick={handleInitiateHeist}
+                    disabled={heistLoading}
+                    title="ปล้นเหรียญจากเพื่อน (เดิมพัน 1 เหรียญ)"
+                    className="flex items-center gap-1.5 bg-red-50 hover:bg-red-100 active:scale-95 px-3 py-1.5 rounded-l-full border border-red-200 shadow-sm transition disabled:opacity-60"
+                  >
+                    <span className="text-base">🗡️</span>
+                    <span className="text-sm font-semibold text-red-700">{heistLoading ? '...' : 'ปล้น'}</span>
+                  </button>
+                  <button
+                    onClick={() => setShowHeistInfo(true)}
+                    title="วิธีเล่น Typing Heist"
+                    className="flex items-center justify-center w-7 h-[34px] bg-red-50 hover:bg-red-100 active:scale-95 border border-l-0 border-red-200 rounded-r-full shadow-sm transition text-red-400 hover:text-red-600 text-xs font-bold"
+                  >
+                    ?
+                  </button>
+                </div>
+              )}
               <div className="hidden sm:flex items-center gap-1.5 bg-yellow-50 px-3 py-1.5 rounded-full border border-yellow-200 shadow-sm">
                 <img src="/gamecoin.png" className="w-6 h-6" alt="coin" />
                 <span className="font-bold text-yellow-700 text-lg">{superTokens}</span>
@@ -569,18 +629,18 @@ export default function ExamPage() {
           style={{ opacity: tutorialVisible ? 1 : 0 }}
         >
           <div
-            className="bg-white rounded-3xl shadow-2xl max-w-md w-full mx-4 overflow-hidden transition-all duration-300"
-            style={{ transform: tutorialVisible ? 'scale(1) translateY(0)' : 'scale(0.95) translateY(16px)', opacity: tutorialVisible ? 1 : 0 }}
+            className="bg-white rounded-3xl shadow-2xl max-w-md w-full mx-4 flex flex-col overflow-hidden transition-all duration-300"
+            style={{ maxHeight: '90vh', transform: tutorialVisible ? 'scale(1) translateY(0)' : 'scale(0.95) translateY(16px)', opacity: tutorialVisible ? 1 : 0 }}
           >
             {/* Header */}
-            <div className="bg-gradient-to-r from-blue-600 to-blue-500 px-6 py-5 text-white text-center">
+            <div className="bg-gradient-to-r from-blue-600 to-blue-500 px-6 py-5 text-white text-center shrink-0">
               <div className="text-3xl mb-1">📋</div>
               <h2 className="text-xl font-bold">คำแนะนำการสอบ</h2>
               <p className="text-blue-100 text-sm mt-1">อ่านก่อนเริ่มทำข้อสอบ</p>
             </div>
 
-            {/* Content */}
-            <div className="p-6 space-y-4">
+            {/* Content — scrollable */}
+            <div className="p-6 space-y-4 overflow-y-auto">
               {/* Hint */}
               <div className="flex gap-4 items-start bg-blue-50 rounded-2xl p-4 border border-blue-100">
                 <div className="text-2xl shrink-0 mt-0.5">💡</div>
@@ -604,10 +664,49 @@ export default function ExamPage() {
                   </p>
                 </div>
               </div>
+
+              {/* Heist divider */}
+              <div className="flex items-center gap-3 pt-1">
+                <div className="flex-1 h-px bg-gray-200" />
+                <span className="text-xs text-gray-400 font-medium tracking-wide">มินิเกม</span>
+                <div className="flex-1 h-px bg-gray-200" />
+              </div>
+
+              {/* Heist */}
+              <div className="bg-red-50 rounded-2xl p-4 border border-red-100 space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">🗡️</span>
+                  <p className="font-semibold text-gray-900">ปล้นเหรียญ (Typing Heist)</p>
+                </div>
+                <p className="text-sm text-gray-600 leading-relaxed">
+                  กดปุ่ม <span className="font-semibold text-red-700">🗡️ ปล้น</span> บน Navbar เพื่อโจมตีเพื่อนในห้องแบบสุ่ม โดยใช้ <span className="font-medium">1 เหรียญ</span> เป็นเดิมพัน
+                </p>
+
+                <div className="space-y-2">
+                  <div className="flex gap-2 items-start text-sm">
+                    <span className="text-base shrink-0 mt-0.5">⚔️</span>
+                    <p className="text-gray-700"><span className="font-medium text-red-700">ปล้นสำเร็จ</span> — เป้าหมายพิมพ์ข้อความไม่ทันใน 7 วินาที → ได้เดิมพันคืน + ขโมย 1 เหรียญ</p>
+                  </div>
+                  <div className="flex gap-2 items-start text-sm">
+                    <span className="text-base shrink-0 mt-0.5">🛡️</span>
+                    <p className="text-gray-700"><span className="font-medium text-green-700">ป้องกันสำเร็จ</span> — เป้าหมายพิมพ์ถูกต้องทันเวลา → ผู้โจมตีเสียเดิมพันให้เป้าหมาย</p>
+                  </div>
+                </div>
+
+                <div className="bg-white/70 rounded-xl px-3 py-2.5 space-y-1">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">เงื่อนไข</p>
+                  <p className="text-xs text-gray-600">• ต้องมีเหรียญ ≥ 1 เหรียญก่อนปล้น</p>
+                  <p className="text-xs text-gray-600">• Cooldown 30 วินาทีระหว่างแต่ละครั้ง</p>
+                  <p className="text-xs text-gray-600">• ปล้นได้สูงสุด 5 ครั้งต่อรอบสอบ</p>
+                  <p className="text-xs text-gray-600">• ปล้นคนเดิมได้แค่ 1 ครั้งต่อรอบ</p>
+                  <p className="text-xs text-gray-600">• ไม่สามารถปล้นคนที่ส่งข้อสอบแล้ว</p>
+                  <p className="text-xs text-gray-600">• จำนวนเหรียญสูงสุดไม่เกิน 3 เหรียญ</p>
+                </div>
+              </div>
             </div>
 
             {/* Footer */}
-            <div className="px-6 pb-6">
+            <div className="px-6 pb-6 pt-2 shrink-0">
               <button
                 onClick={closeTutorial}
                 className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-semibold rounded-2xl transition-all duration-150 shadow-lg shadow-blue-500/25"
@@ -678,6 +777,119 @@ export default function ExamPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Heist: Info modal (วิธีเล่น) */}
+      {showHeistInfo && (
+        <div className="fixed inset-0 z-[105] flex items-center justify-center bg-gray-950/60 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-sm w-full mx-4 flex flex-col overflow-hidden" style={{ maxHeight: '85vh' }}>
+            <div className="bg-gradient-to-r from-red-600 to-orange-500 px-6 py-5 text-white text-center shrink-0">
+              <div className="text-3xl mb-1">🗡️</div>
+              <h2 className="text-xl font-bold">Typing Heist</h2>
+              <p className="text-red-100 text-sm mt-1">ปล้นเหรียญจากเพื่อนในห้อง</p>
+            </div>
+
+            <div className="p-5 space-y-4 overflow-y-auto">
+              {/* Flow */}
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">วิธีเล่น</p>
+                <div className="flex gap-3 items-start">
+                  <span className="w-6 h-6 rounded-full bg-red-100 text-red-700 text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">1</span>
+                  <p className="text-sm text-gray-700">กดปุ่ม <span className="font-semibold">🗡️ ปล้น</span> — ระบบสุ่มเลือกเป้าหมายในห้องและหักเหรียญเดิมพัน 1 เหรียญ</p>
+                </div>
+                <div className="flex gap-3 items-start">
+                  <span className="w-6 h-6 rounded-full bg-red-100 text-red-700 text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">2</span>
+                  <p className="text-sm text-gray-700">เป้าหมายได้รับ popup ต้องพิมพ์ข้อความที่กำหนดให้ถูกต้องทุกตัวอักษร <span className="font-semibold">(case-sensitive)</span> ภายใน 7 วินาที</p>
+                </div>
+                <div className="flex gap-3 items-start">
+                  <span className="w-6 h-6 rounded-full bg-red-100 text-red-700 text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">3</span>
+                  <p className="text-sm text-gray-700">ผลลัพธ์จะแสดงทันทีเมื่อครบ 7 วินาที หรือเป้าหมายยืนยันคำตอบ</p>
+                </div>
+              </div>
+
+              {/* Outcomes */}
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">ผลลัพธ์</p>
+                <div className="bg-red-50 border border-red-100 rounded-xl px-4 py-3 flex gap-3 items-start">
+                  <span className="text-lg shrink-0">⚔️</span>
+                  <div>
+                    <p className="text-sm font-semibold text-red-700">ปล้นสำเร็จ</p>
+                    <p className="text-xs text-gray-600 mt-0.5">เป้าหมายพิมพ์ไม่ทัน/ผิด → ได้เดิมพันคืน + ขโมย 1 เหรียญจากเป้าหมาย</p>
+                  </div>
+                </div>
+                <div className="bg-green-50 border border-green-100 rounded-xl px-4 py-3 flex gap-3 items-start">
+                  <span className="text-lg shrink-0">🛡️</span>
+                  <div>
+                    <p className="text-sm font-semibold text-green-700">ป้องกันสำเร็จ</p>
+                    <p className="text-xs text-gray-600 mt-0.5">เป้าหมายพิมพ์ถูกต้องทันเวลา → ผู้โจมตีเสียเดิมพัน เป้าหมายได้รับ 1 เหรียญ</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Rules */}
+              <div className="bg-gray-50 rounded-xl px-4 py-3 space-y-1.5">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">กฎ</p>
+                <p className="text-xs text-gray-600">• ต้องมีเหรียญ ≥ 1 ก่อนปล้น (เดิมพัน 1 เหรียญ)</p>
+                <p className="text-xs text-gray-600">• Cooldown 30 วินาทีระหว่างแต่ละครั้ง</p>
+                <p className="text-xs text-gray-600">• สูงสุด 5 ครั้งต่อรอบสอบ</p>
+                <p className="text-xs text-gray-600">• ปล้นคนเดิมได้แค่ 1 ครั้ง</p>
+                <p className="text-xs text-gray-600">• ไม่สามารถปล้นคนที่ส่งข้อสอบแล้ว</p>
+                <p className="text-xs text-gray-600">• เหรียญสูงสุดไม่เกิน 3 เหรียญ</p>
+              </div>
+            </div>
+
+            <div className="px-5 pb-5 pt-2 shrink-0">
+              <button
+                onClick={() => setShowHeistInfo(false)}
+                className="w-full py-3 bg-gray-900 text-white font-semibold rounded-xl active:scale-95 transition"
+              >
+                ปิด
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Heist: Error modal (ปล้นไม่ได้ + สาเหตุ) */}
+      {heistErrorMsg && (
+        <div className="fixed inset-0 z-[105] flex items-center justify-center bg-gray-950/60 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-xs w-full mx-4 overflow-hidden">
+            <div className="bg-gradient-to-r from-gray-700 to-gray-800 px-6 py-5 text-white text-center">
+              <div className="text-3xl mb-1">🗡️</div>
+              <h2 className="text-lg font-bold">ปล้นไม่ได้</h2>
+            </div>
+            <div className="p-6 text-center">
+              <p className="text-gray-700 text-sm leading-relaxed mb-5">{heistErrorMsg}</p>
+              <button
+                onClick={() => setHeistErrorMsg('')}
+                className="w-full py-3 bg-gray-900 text-white font-semibold rounded-xl active:scale-95 transition"
+              >
+                ตกลง
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Heist: Attacker waiting modal */}
+      {heistAttacking && (
+        <HeistAttackerModal
+          heistId={heistAttacking.heistId}
+          snippet={heistAttacking.snippet}
+          victimName={heistAttacking.victimName}
+          onDone={() => setHeistAttacking(null)}
+        />
+      )}
+
+      {/* Heist: Victim defense modal */}
+      {heistIncoming && (
+        <HeistVictimModal
+          heistId={heistIncoming.heistId}
+          snippet={heistIncoming.snippet}
+          attackerName={heistIncoming.attackerName}
+          deadline={heistIncoming.deadline}
+          onDone={() => setHeistIncoming(null)}
+        />
       )}
 
       {/* Success Modal */}

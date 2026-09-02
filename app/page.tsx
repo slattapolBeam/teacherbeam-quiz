@@ -168,13 +168,14 @@ export default function LoginPage() {
     e.preventDefault()
     setTeacherError('')
     setIsSigningIn(true)
-    const result = await signInTeacher(teacherEmail, teacherPassword)
-    if (result.success) {
-      router.push('/dashboard')
-    } else {
-      setTeacherError(result.error)
+    try {
+      const result = await signInTeacher(teacherEmail, teacherPassword)
+      if (result?.error) setTeacherError(result.error)
+    } catch {
+      setTeacherError('เกิดข้อผิดพลาด กรุณาลองอีกครั้ง')
+    } finally {
+      setIsSigningIn(false)
     }
-    setIsSigningIn(false)
   }
 
   function goBackToId() {

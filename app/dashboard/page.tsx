@@ -13,7 +13,9 @@ import {
   importStudents as importStudentsAction,
   deleteStudent as deleteStudentAction,
   deleteRoom as deleteRoomAction,
+  getHeistLog as getHeistLogAction,
   type ImportStudentRow,
+  type HeistLogRow,
 } from '@/app/actions/dashboard'
 import { signOutTeacher } from '@/app/actions/auth'
 
@@ -110,6 +112,12 @@ export default function DashboardPage() {
   const [isDeletingRoom, setIsDeletingRoom] = useState<string | null>(null)
   const [manageStudentBusyId, setManageStudentBusyId] = useState<string | null>(null)
   const [manageRoomFilter, setManageRoomFilter] = useState('ALL')
+
+  // ── Heist log modal ───────────────────────────────────────
+  const [showHeistLogModal, setShowHeistLogModal] = useState(false)
+  const [heistLogRows, setHeistLogRows] = useState<HeistLogRow[]>([])
+  const [heistLogLoading, setHeistLogLoading] = useState(false)
+  const [heistLogError, setHeistLogError] = useState('')
 
   const projectLabel = projects.find(p => p.value === projectFilter)?.label || projectFilter
 
@@ -533,6 +541,18 @@ export default function DashboardPage() {
     setShowManageStudentsModal(true)
   }
 
+  // ── Heist log ─────────────────────────────────────────────
+  async function openHeistLog() {
+    if (!projectFilter) return alert('เลือกวิชาก่อนดู Heist log')
+    setHeistLogError('')
+    setShowHeistLogModal(true)
+    setHeistLogLoading(true)
+    const result = await getHeistLogAction(projectFilter)
+    setHeistLogLoading(false)
+    if (!result.success) { setHeistLogError(result.error); return }
+    setHeistLogRows(result.rows)
+  }
+
   // ── CSV export ───────────────────────────────────────────
   function exportToCSV() {
     if (globalExamData.length === 0) return alert('ไม่มีข้อมูลสำหรับดาวน์โหลด')
@@ -856,6 +876,9 @@ export default function DashboardPage() {
               </button>
               <button onClick={exportToCSV} className={btn('primary')}>
                 📥 CSV
+              </button>
+              <button onClick={openHeistLog} className={btn('ghost')}>
+                🗡️ Heist Log
               </button>
             </div>
           </div>
@@ -1213,6 +1236,60 @@ export default function DashboardPage() {
 
             <div className="p-4 border-t border-gray-100">
               <button onClick={() => setShowManageStudentsModal(false)} className={`w-full ${mbtn('cancel')}`}>ปิดหน้าต่าง</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Heist Log Modal */}
+      {showHeistLogModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+              <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">🗡️ ประวัติ Heist — {projectLabel}</h2>
+              <button onClick={() => setShowHeistLogModal(false)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+            </div>
+            <div className="overflow-y-auto flex-1">
+              {heistLogLoading ? (
+                <div className="flex items-center justify-center py-16 text-gray-400">กำลังโหลด...</div>
+              ) : heistLogError ? (
+                <div className="flex items-center justify-center py-16 text-red-500">{heistLogError}</div>
+              ) : heistLogRows.length === 0 ? (
+                <div className="flex items-center justify-center py-16 text-gray-400">ยังไม่มีประวัติการปล้น</div>
+              ) : (
+                <table className="w-full text-sm text-left">
+                  <thead className="bg-gray-50 text-gray-400 uppercase text-xs tracking-wider font-semibold border-b border-gray-100 sticky top-0">
+                    <tr>
+                      <th className="py-3 px-4">เวลา</th>
+                      <th className="py-3 px-4">ผู้โจมตี</th>
+                      <th className="py-3 px-4">เป้าหมาย</th>
+                      <th className="py-3 px-4">โจทย์พิมพ์</th>
+                      <th className="py-3 px-4 text-center">ผล</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {heistLogRows.map(row => (
+                      <tr key={row.id} className="hover:bg-gray-50 transition">
+                        <td className="py-2.5 px-4 text-gray-500 whitespace-nowrap font-mono text-xs">
+                          {new Date(row.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                        </td>
+                        <td className="py-2.5 px-4 font-medium text-gray-900 whitespace-nowrap">{row.attacker_name}</td>
+                        <td className="py-2.5 px-4 text-gray-700 whitespace-nowrap">{row.victim_name}</td>
+                        <td className="py-2.5 px-4 max-w-xs">
+                          <code className="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded break-all">{row.snippet}</code>
+                        </td>
+                        <td className="py-2.5 px-4 text-center whitespace-nowrap">
+                          {row.outcome === 'success' && <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded-full text-xs font-semibold">ปล้นสำเร็จ 🗡️</span>}
+                          {row.outcome === 'defended' && <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-xs font-semibold">ป้องกันได้ 🛡️</span>}
+                          {row.outcome === 'pending' && <span className="px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded-full text-xs font-semibold">กำลังดำเนินการ ⏳</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            <div className="p-4 border-t border-gray-100">
+              <button onClick={() => setShowHeistLogModal(false)} className="w-full py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-xl transition">ปิด</button>
             </div>
           </div>
         </div>

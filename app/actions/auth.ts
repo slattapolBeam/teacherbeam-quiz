@@ -4,18 +4,19 @@ import { redirect } from 'next/navigation'
 import { createAuthServerClient } from '@/lib/supabase/auth-server'
 import { logActivity } from '@/lib/auditLog'
 
-type SignInResult = { success: true } | { success: false; error: string }
+type SignInError = { error: string }
 
 // ── อาจารย์ล็อกอินด้วย email/password (Supabase Auth) — ไม่มีหน้าสมัครสมาชิก สร้าง account ได้ผ่าน Supabase Dashboard เท่านั้น ──
-export async function signInTeacher(email: string, password: string): Promise<SignInResult> {
+// redirect('/dashboard') ทำงานใน Server Action เพื่อให้ cookies ถูก set ก่อน navigation จาก Proxy
+export async function signInTeacher(email: string, password: string): Promise<SignInError | void> {
   const supabase = await createAuthServerClient()
   const { error } = await supabase.auth.signInWithPassword({ email, password })
   if (error) {
     await logActivity({ type: 'teacher', id: email }, 'teacher_login_failed')
-    return { success: false, error: 'อีเมลหรือรหัสผ่านไม่ถูกต้อง' }
+    return { error: 'อีเมลหรือรหัสผ่านไม่ถูกต้อง' }
   }
   await logActivity({ type: 'teacher', id: email }, 'teacher_login_success')
-  return { success: true }
+  redirect('/dashboard')
 }
 
 export async function signOutTeacher(): Promise<void> {

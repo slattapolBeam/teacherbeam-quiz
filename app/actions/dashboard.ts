@@ -237,6 +237,55 @@ export async function importStudents(
   }
 }
 
+// ── ประวัติ Heist (ปล้นเหรียญ) ────────────────────────────────
+export type HeistLogRow = {
+  id: number
+  attacker_id: string
+  attacker_name: string
+  victim_id: string
+  victim_name: string
+  snippet: string
+  outcome: string
+  stake_amount: number
+  created_at: string
+  resolved_at: string | null
+}
+
+export async function getHeistLog(projectName: string): Promise<ActionResult<{ rows: HeistLogRow[] }>> {
+  const supabase = createServiceClient()
+  try {
+    await requireTeacher()
+    const { data: rawRows, error } = await supabase
+      .from('token_heist_log')
+      .select('id, attacker_id, victim_id, snippet, outcome, stake_amount, created_at, resolved_at')
+      .eq('project_name', projectName)
+      .order('created_at', { ascending: false })
+      .limit(200)
+    if (error) throw error
+
+    const rows = rawRows || []
+    const ids = new Set<string>()
+    rows.forEach((r: any) => { ids.add(r.attacker_id); ids.add(r.victim_id) })
+
+    const { data: students } = await supabase
+      .from('students').select('student_id, first_name, last_name').in('student_id', [...ids])
+    const nameMap = new Map((students || []).map((s: any) => [
+      s.student_id, `${s.first_name} ${s.last_name}`
+    ]))
+
+    return {
+      success: true,
+      rows: rows.map((r: any) => ({
+        ...r,
+        attacker_name: nameMap.get(r.attacker_id) ?? r.attacker_id,
+        victim_name: nameMap.get(r.victim_id) ?? r.victim_id,
+      })),
+    }
+  } catch (err: any) {
+    return { success: false, error: err.message }
+  }
+}
+
 // ── ลบนักศึกษารายคน ──────────────────────────────────────────
 export async function deleteStudent(studentId: string): Promise<ActionResult> {
   const supabase = createServiceClient()
