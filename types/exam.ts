@@ -11,6 +11,7 @@ export interface ActiveExamSession {
   gacha_amount: number
   hints_used?: number
   duration_minutes?: number
+  heist_window_seconds?: number
   session_started_at?: string
 }
 

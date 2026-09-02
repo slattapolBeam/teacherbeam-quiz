@@ -60,7 +60,7 @@ export default function ExamPage() {
   const [tutorialVisible, setTutorialVisible] = useState(false)
 
   // Heist states
-  type HeistAttackerInfo = { heistId: number; snippet: string; victimName: string }
+  type HeistAttackerInfo = { heistId: number; snippet: string; victimName: string; heistWindowSecs: number }
   type HeistVictimInfo = { heistId: number; snippet: string; attackerName: string; deadline: string }
   const [heistAttacking, setHeistAttacking] = useState<HeistAttackerInfo | null>(null)
   const [heistIncoming, setHeistIncoming] = useState<HeistVictimInfo | null>(null)
@@ -433,7 +433,7 @@ export default function ExamPage() {
       setHeistErrorMsg(result.error)
       return
     }
-    setHeistAttacking({ heistId: result.heistId, snippet: result.snippet, victimName: result.victimName })
+    setHeistAttacking({ heistId: result.heistId, snippet: result.snippet, victimName: result.victimName, heistWindowSecs: result.heistWindowSecs })
   }
 
   // ── Submit ───────────────────────────────────────────────
@@ -877,6 +877,7 @@ export default function ExamPage() {
           heistId={heistAttacking.heistId}
           snippet={heistAttacking.snippet}
           victimName={heistAttacking.victimName}
+          heistWindowSecs={heistAttacking.heistWindowSecs}
           onDone={() => setHeistAttacking(null)}
         />
       )}

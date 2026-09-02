@@ -11,13 +11,14 @@ interface AttackerProps {
   heistId: number
   snippet: string
   victimName: string
+  heistWindowSecs: number
   onDone: () => void
 }
 
 type AttackerPhase = 'countdown' | 'resolving' | 'success' | 'defended'
 
-export function HeistAttackerModal({ heistId, snippet, victimName, onDone }: AttackerProps) {
-  const TOTAL = 10
+export function HeistAttackerModal({ heistId, snippet, victimName, heistWindowSecs, onDone }: AttackerProps) {
+  const TOTAL = heistWindowSecs
   const [secsLeft, setSecsLeft] = useState(TOTAL)
   const [phase, setPhase] = useState<AttackerPhase>('countdown')
   const [gained, setGained] = useState(0)

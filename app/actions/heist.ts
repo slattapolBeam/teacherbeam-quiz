@@ -4,7 +4,6 @@ import { createServiceClient } from '@/lib/supabase/server'
 import { getExamSession } from '@/app/actions/session'
 import { logActivity } from '@/lib/auditLog'
 
-const HEIST_WINDOW_MS = 10_000
 const TOLERANCE_MS = 500      // server-side grace for victim defense
 const COOLDOWN_MS = 30_000
 const MAX_PER_SESSION = 5
@@ -24,7 +23,7 @@ function isTrivial(s: string): boolean {
 // INITIATE — attacker bets 1 token, pick victim + snippet, broadcast attack
 // ─────────────────────────────────────────────
 export type InitiateResult =
-  | { success: true; heistId: number; snippet: string; victimName: string }
+  | { success: true; heistId: number; snippet: string; victimName: string; heistWindowSecs: number }
   | { success: false; error: string }
 
 export async function initiateHeist(): Promise<InitiateResult> {
@@ -36,6 +35,7 @@ export async function initiateHeist(): Promise<InitiateResult> {
 
   const supabase = createServiceClient()
   const { student_id, project_name, room, class_number, pin_code } = session
+  const heistWindowMs = (session.heist_window_seconds ?? 10) * 1000
 
   // 1. Token balance
   const { data: attacker } = await supabase
@@ -134,7 +134,7 @@ export async function initiateHeist(): Promise<InitiateResult> {
   }
 
   // 9. Broadcast to victim via Realtime
-  const deadline = new Date(Date.now() + HEIST_WINDOW_MS).toISOString()
+  const deadline = new Date(Date.now() + heistWindowMs).toISOString()
   try {
     const ch = supabase.channel('heist-broadcast')
     await ch.subscribe()
@@ -162,11 +162,12 @@ export async function initiateHeist(): Promise<InitiateResult> {
     heistId: heistRow.id,
     snippet,
     victimName: `${victim.first_name} ${victim.last_name}`,
+    heistWindowSecs: session.heist_window_seconds ?? 10,
   }
 }
 
 // ─────────────────────────────────────────────
-// RESOLVE (attacker side) — called after HEIST_WINDOW_MS elapses
+// RESOLVE (attacker side) — called after the heist window elapses
 // ─────────────────────────────────────────────
 export type ResolveResult =
   | { success: true; outcome: 'success' | 'already_resolved'; tokensGained: number }
@@ -177,8 +178,9 @@ export async function resolveHeistAttacker(heistId: number): Promise<ResolveResu
   if (!session) return { success: false, error: 'session หมดอายุ' }
 
   const supabase = createServiceClient()
-  // created_at must be ≤ NOW() - 7s (window fully elapsed)
-  const windowEnd = new Date(Date.now() - HEIST_WINDOW_MS).toISOString()
+  const heistWindowMs = (session.heist_window_seconds ?? 10) * 1000
+  // created_at must be ≤ NOW() - window (window fully elapsed)
+  const windowEnd = new Date(Date.now() - heistWindowMs).toISOString()
 
   const { data: updated } = await supabase
     .from('token_heist_log')
@@ -240,9 +242,10 @@ export async function defendHeist(heistId: number, typedText: string): Promise<D
   if (!row) return { success: false, error: 'ไม่พบข้อมูลการโจมตี' }
   if (row.outcome !== 'pending') return { success: true, defended: false }
 
-  // Timing: victim must respond within HEIST_WINDOW_MS + tolerance
+  // Timing: victim must respond within the configured window + tolerance
+  const heistWindowMs = (session.heist_window_seconds ?? 10) * 1000
   const elapsed = Date.now() - new Date(row.created_at).getTime()
-  if (elapsed > HEIST_WINDOW_MS + TOLERANCE_MS) return { success: true, defended: false }
+  if (elapsed > heistWindowMs + TOLERANCE_MS) return { success: true, defended: false }
 
   // Exact case-sensitive match
   if (typedText !== row.snippet) return { success: true, defended: false }

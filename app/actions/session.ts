@@ -59,6 +59,7 @@ export async function startExamSession(studentId: string, pin: string): Promise<
     gacha_amount: 0,
     hints_used: 0,
     duration_minutes: sessionRow.duration_minutes ?? 15,
+    heist_window_seconds: sessionRow.heist_window_seconds ?? 10,
     session_started_at: sessionRow.created_at,
   }
 

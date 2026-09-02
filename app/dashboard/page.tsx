@@ -82,6 +82,7 @@ export default function DashboardPage() {
   const [isDistributing, setIsDistributing] = useState(false)
   const [showDurationModal, setShowDurationModal] = useState(false)
   const [durationInput, setDurationInput] = useState('15')
+  const [heistWindowInput, setHeistWindowInput] = useState('10')
   const [examTimeLeft, setExamTimeLeft] = useState<number | null>(null)
   const examTimerRef = useRef<NodeJS.Timeout | null>(null)
   const examTimeLeftRef = useRef<number>(0)
@@ -238,6 +239,7 @@ export default function DashboardPage() {
   // ── PIN management ──────────────────────────────────────
   function openDurationModal() {
     setDurationInput('15')
+    setHeistWindowInput('10')
     setShowDurationModal(true)
   }
 
@@ -247,9 +249,14 @@ export default function DashboardPage() {
       alert('กรุณาระบุเวลาระหว่าง 1–180 นาที')
       return
     }
+    const heistSecs = parseInt(heistWindowInput)
+    if (!heistSecs || heistSecs < 5 || heistSecs > 120) {
+      alert('กรุณาระบุเวลา Steal Coin ระหว่าง 5–120 วินาที')
+      return
+    }
     setShowDurationModal(false)
     setGeneratingPin(true)
-    const result = await generatePinAction(projectFilter, minutes)
+    const result = await generatePinAction(projectFilter, minutes, heistSecs)
     if (result.success) {
       setPinActive(true)
       setCurrentPin(result.pin)
@@ -999,6 +1006,24 @@ export default function DashboardPage() {
               />
               <span className="text-gray-500 font-medium text-lg shrink-0">นาที</span>
             </div>
+
+            <div className="mt-4 border-t border-gray-100 pt-4">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">🗡️ Steal Coin — เวลาพิมพ์ต่อครั้ง</p>
+              <div className="flex items-center gap-3 bg-orange-50 border border-orange-200 rounded-xl px-4 py-3">
+                <input
+                  type="number"
+                  min={5}
+                  max={120}
+                  value={heistWindowInput}
+                  onChange={e => setHeistWindowInput(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && confirmOpenSession()}
+                  className="flex-1 bg-transparent text-3xl font-mono font-bold text-orange-600 text-center outline-none w-0"
+                />
+                <span className="text-orange-400 font-medium text-lg shrink-0">วินาที</span>
+              </div>
+              <p className="text-xs text-gray-400 mt-1.5 text-center">เวลาที่ นศ. มีในการพิมพ์ snippet เพื่อป้องกัน (5–120 วิ)</p>
+            </div>
+
             <div className="flex gap-3 mt-5">
               <button onClick={() => setShowDurationModal(false)} className={`flex-1 ${mbtn('cancel')}`}>ยกเลิก</button>
               <button onClick={confirmOpenSession} className={`flex-1 ${mbtn('indigo')}`}>เปิดห้องสอบ</button>

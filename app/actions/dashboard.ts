@@ -7,7 +7,7 @@ import { logActivity } from '@/lib/auditLog'
 type ActionResult<T extends object = {}> = ({ success: true } & T) | { success: false; error: string }
 
 // ── PIN management ────────────────────────────────────────
-export async function generatePin(projectName: string, durationMinutes: number): Promise<ActionResult<{ pin: string }>> {
+export async function generatePin(projectName: string, durationMinutes: number, heistWindowSeconds: number = 10): Promise<ActionResult<{ pin: string }>> {
   const supabase = createServiceClient()
   try {
     const teacher = await requireTeacher()
@@ -20,10 +20,10 @@ export async function generatePin(projectName: string, durationMinutes: number):
 
     // exam_sessions ไม่มี unique constraint บน project_name จึงต้อง insert ไม่ใช่ upsert
     const { error: insertErr } = await supabase.from('exam_sessions')
-      .insert([{ project_name: projectName, pin_code: pin, is_active: true, duration_minutes: durationMinutes }])
+      .insert([{ project_name: projectName, pin_code: pin, is_active: true, duration_minutes: durationMinutes, heist_window_seconds: heistWindowSeconds }])
     if (insertErr) throw insertErr
 
-    await logActivity({ type: 'teacher', id: teacher.email }, 'generate_pin', projectName, { pin, durationMinutes })
+    await logActivity({ type: 'teacher', id: teacher.email }, 'generate_pin', projectName, { pin, durationMinutes, heistWindowSeconds })
     return { success: true, pin }
   } catch (err: any) {
     return { success: false, error: err.message }
