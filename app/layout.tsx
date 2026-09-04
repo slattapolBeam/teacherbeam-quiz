@@ -12,6 +12,8 @@ export const metadata: Metadata = {
   description: 'ระบบข้อสอบ Coding',
 }
 
+const APP_VERSION = '1.5.0'
+
 export default function RootLayout({
   children,
 }: {
@@ -19,7 +21,12 @@ export default function RootLayout({
 }) {
   return (
     <html lang="th">
-      <body className={prompt.className}>{children}</body>
+      <body className={prompt.className}>
+        {children}
+        <div className="fixed bottom-2 right-3 text-[10px] font-mono text-gray-300 pointer-events-none select-none z-[200]">
+          v{APP_VERSION}
+        </div>
+      </body>
     </html>
   )
 }

@@ -12,23 +12,24 @@ interface AttackerProps {
   snippet: string
   victimName: string
   heistWindowSecs: number
+  deadline: string
   onDone: () => void
 }
 
 type AttackerPhase = 'countdown' | 'resolving' | 'success' | 'defended'
 
-export function HeistAttackerModal({ heistId, snippet, victimName, heistWindowSecs, onDone }: AttackerProps) {
+export function HeistAttackerModal({ heistId, snippet, victimName, heistWindowSecs, deadline, onDone }: AttackerProps) {
   const TOTAL = heistWindowSecs
-  const [secsLeft, setSecsLeft] = useState(TOTAL)
+  const [secsLeft, setSecsLeft] = useState(() =>
+    Math.max(0, (new Date(deadline).getTime() - Date.now()) / 1000)
+  )
   const [phase, setPhase] = useState<AttackerPhase>('countdown')
   const [gained, setGained] = useState(0)
   const resolvedRef = useRef(false)
 
   useEffect(() => {
-    const start = Date.now()
     const tick = setInterval(() => {
-      const elapsed = (Date.now() - start) / 1000
-      const remaining = Math.max(0, TOTAL - elapsed)
+      const remaining = Math.max(0, (new Date(deadline).getTime() - Date.now()) / 1000)
       setSecsLeft(remaining)
       if (remaining <= 0) {
         clearInterval(tick)
@@ -36,7 +37,7 @@ export function HeistAttackerModal({ heistId, snippet, victimName, heistWindowSe
       }
     }, 100)
     return () => clearInterval(tick)
-  }, [])
+  }, [deadline])
 
   async function resolve() {
     if (resolvedRef.current) return
@@ -143,18 +144,21 @@ interface VictimProps {
   onDone: () => void
 }
 
+const MIN_USABLE_SECS = 1.5
+
 type VictimPhase = 'typing' | 'submitting' | 'defended' | 'failed'
 
 export function HeistVictimModal({ heistId, snippet, attackerName, deadline, onDone }: VictimProps) {
   const [typed, setTyped] = useState('')
   const [secsLeft, setSecsLeft] = useState(0)
-  const [phase, setPhase] = useState<VictimPhase>('typing')
-  const [mismatch, setMismatch] = useState(false)
-  const inputRef = useRef<HTMLInputElement>(null)
-  const resolvedRef = useRef(false)
-
   const TOTAL = Math.max(0, (new Date(deadline).getTime() - Date.now()) / 1000)
   const totalRef = useRef(TOTAL)
+  // หาก notification มาถึงช้าจนเหลือเวลาน้อยกว่า threshold → ข้าม typing phase
+  const tooLate = TOTAL < MIN_USABLE_SECS
+  const [phase, setPhase] = useState<VictimPhase>(tooLate ? 'failed' : 'typing')
+  const [mismatch, setMismatch] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const resolvedRef = useRef(tooLate) // pre-resolved ถ้าเวลาหมดแล้ว
 
   useEffect(() => {
     inputRef.current?.focus()

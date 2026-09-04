@@ -23,7 +23,7 @@ function isTrivial(s: string): boolean {
 // INITIATE — attacker bets 1 token, pick victim + snippet, broadcast attack
 // ─────────────────────────────────────────────
 export type InitiateResult =
-  | { success: true; heistId: number; snippet: string; victimName: string; heistWindowSecs: number }
+  | { success: true; heistId: number; snippet: string; victimName: string; heistWindowSecs: number; deadline: string }
   | { success: false; error: string }
 
 export async function initiateHeist(): Promise<InitiateResult> {
@@ -160,6 +160,7 @@ export async function initiateHeist(): Promise<InitiateResult> {
     snippet,
     victimName: `${victim.first_name} ${victim.last_name}`,
     heistWindowSecs: session.heist_window_seconds ?? 10,
+    deadline,
   }
 }
 
@@ -286,7 +287,7 @@ export async function getPendingHeistForVictim(): Promise<PendingHeistInfo> {
 
   const supabase = createServiceClient()
   const windowMs = (session.heist_window_seconds ?? 10) * 1000
-  const cutoff = new Date(Date.now() - windowMs - 1000).toISOString()
+  const cutoff = new Date(Date.now() - windowMs).toISOString()
 
   const { data: row } = await supabase
     .from('token_heist_log')
