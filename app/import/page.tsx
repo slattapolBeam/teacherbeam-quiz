@@ -1,8 +1,8 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { saveExamQuestions, deleteExamQuestionSet, deleteSubject, listExamSets, createSubject } from '@/app/actions/import'
+import { saveExamQuestions, deleteExamQuestionSet, deleteSubject, listExamSets, createSubject, getExamSetPreview, type ExamSetPreviewData } from '@/app/actions/import'
 import { signOutTeacher } from '@/app/actions/auth'
 
 type BlankType = { type: 'dropdown'; choices: string[] } | null
@@ -133,6 +133,13 @@ export default function ImportPage() {
   const [isLoadingExisting, setIsLoadingExisting] = useState(false)
   const [deletingKey, setDeletingKey] = useState<string | null>(null)
   const [deletingSubject, setDeletingSubject] = useState<string | null>(null)
+
+  // ── preview ──────────────────────────────────────────────────
+  const [previewSet, setPreviewSet] = useState<ExamSetPreviewData | null>(null)
+  const [previewMode, setPreviewMode] = useState<'student' | 'answer'>('student')
+  const [previewFileIndex, setPreviewFileIndex] = useState(0)
+  const [loadingPreviewKey, setLoadingPreviewKey] = useState<string | null>(null)
+  const previewRef = useRef<HTMLDivElement>(null)
 
   // ── เพิ่มวิชาใหม่ ──────────────────────────────────────────
   const [showAddSubjectModal, setShowAddSubjectModal] = useState(false)
@@ -326,6 +333,28 @@ export default function ImportPage() {
     }
   }
 
+  // ── fill หรือ clear คำตอบใน preview container เมื่อ mode/ไฟล์เปลี่ยน ──
+  useEffect(() => {
+    const container = previewRef.current
+    if (!container || !previewSet) return
+    previewSet.answers.forEach((ans, i) => {
+      const el = container.querySelector(`#q${i}`) as HTMLInputElement | HTMLSelectElement | null
+      if (!el) return
+      el.value = previewMode === 'answer' ? ans : ''
+    })
+  }, [previewMode, previewSet, previewFileIndex])
+
+  async function handlePreview(projectName: string, setName: string) {
+    const key = `${projectName}::${setName}`
+    setLoadingPreviewKey(key)
+    const result = await getExamSetPreview(projectName, setName)
+    setLoadingPreviewKey(null)
+    if (!result.success) { alert('โหลด preview ไม่สำเร็จ: ' + result.error); return }
+    setPreviewSet(result.set)
+    setPreviewMode('student')
+    setPreviewFileIndex(0)
+  }
+
   const groupedExisting = subjects.map(name => ({
     projectName: name,
     sets: existingSets.filter(s => s.project_name === name),
@@ -500,14 +529,24 @@ export default function ImportPage() {
                               <p className="text-xs font-medium text-gray-700">{s.set_name}</p>
                               <p className="text-xs text-gray-400 truncate max-w-[320px]">{s.question}</p>
                             </div>
-                            <button
-                              onClick={() => handleDeleteSet(s.project_name, s.set_name)}
-                              disabled={deletingKey === key}
-                              title="ลบชุดข้อสอบนี้"
-                              className="px-2.5 py-1.5 bg-red-50 hover:bg-red-100 disabled:opacity-60 border border-red-200 text-red-500 rounded-lg transition active:scale-95 text-xs shrink-0"
-                            >
-                              {deletingKey === key ? '⏳' : '🗑️'}
-                            </button>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                onClick={() => handlePreview(s.project_name, s.set_name)}
+                                disabled={loadingPreviewKey === key}
+                                title="พรีวิวข้อสอบ"
+                                className="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 disabled:opacity-60 border border-blue-200 text-blue-600 rounded-lg transition active:scale-95 text-xs"
+                              >
+                                {loadingPreviewKey === key ? '⏳' : '👁️'}
+                              </button>
+                              <button
+                                onClick={() => handleDeleteSet(s.project_name, s.set_name)}
+                                disabled={deletingKey === key}
+                                title="ลบชุดข้อสอบนี้"
+                                className="px-2.5 py-1.5 bg-red-50 hover:bg-red-100 disabled:opacity-60 border border-red-200 text-red-500 rounded-lg transition active:scale-95 text-xs"
+                              >
+                                {deletingKey === key ? '⏳' : '🗑️'}
+                              </button>
+                            </div>
                           </div>
                         )
                       })}
@@ -519,6 +558,81 @@ export default function ImportPage() {
           )}
         </div>
       </div>
+
+      {/* Preview Modal */}
+      {previewSet && (() => {
+        const isMultiFile = Array.isArray(previewSet.files) && previewSet.files.length > 0
+        const currentCode = isMultiFile
+          ? (previewSet.files![previewFileIndex]?.code ?? '')
+          : (previewSet.code ?? '')
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col">
+              {/* Header */}
+              <div className="flex items-start justify-between gap-4 px-6 pt-5 pb-4 border-b border-gray-100 shrink-0">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">{previewSet.project_name} / {previewSet.set_name}</p>
+                  <h2 className="text-base font-semibold text-gray-900 mt-0.5 truncate">{previewSet.title}</h2>
+                </div>
+                <button
+                  onClick={() => setPreviewSet(null)}
+                  className="shrink-0 w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition text-lg"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Controls */}
+              <div className="flex items-center gap-3 px-6 py-3 border-b border-gray-100 shrink-0">
+                <span className="text-xs font-semibold text-gray-500">โหมด:</span>
+                <div className="flex rounded-xl overflow-hidden border border-gray-200 text-xs font-medium">
+                  <button
+                    onClick={() => setPreviewMode('student')}
+                    className={`px-3 py-1.5 transition ${previewMode === 'student' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                  >
+                    นักศึกษา
+                  </button>
+                  <button
+                    onClick={() => setPreviewMode('answer')}
+                    className={`px-3 py-1.5 transition ${previewMode === 'answer' ? 'bg-green-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                  >
+                    เฉลย
+                  </button>
+                </div>
+                <span className="text-xs text-gray-400">{previewSet.answers.length} ช่อง</span>
+              </div>
+
+              {/* File tabs (multi-file only) */}
+              {isMultiFile && (
+                <div className="flex gap-1.5 px-6 py-2 border-b border-gray-100 overflow-x-auto shrink-0">
+                  {previewSet.files!.map((f, i) => (
+                    <button
+                      key={i}
+                      onClick={() => setPreviewFileIndex(i)}
+                      className={`px-3 py-1 rounded-lg text-xs font-mono transition whitespace-nowrap ${
+                        i === previewFileIndex
+                          ? 'bg-gray-800 text-white'
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}
+                    >
+                      {f.filename}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Code area */}
+              <div className="overflow-auto flex-1 p-6 bg-[#1E1E1E] rounded-b-3xl">
+                <div
+                  ref={previewRef}
+                  className="font-mono text-sm text-gray-300 leading-relaxed whitespace-pre-wrap [&_.hint-btn]:pointer-events-none [&_.hint-btn]:opacity-30"
+                  dangerouslySetInnerHTML={{ __html: currentCode }}
+                />
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Add Subject Modal */}
       {showAddSubjectModal && (

@@ -109,6 +109,48 @@ export async function createSubject(name: string, description: string): Promise<
   }
 }
 
+// ── ดึงข้อมูลชุดข้อสอบเต็มสำหรับ preview (teacher only) ──
+export type ExamSetPreviewData = {
+  project_name: string
+  set_name: string
+  title: string
+  code: string | null
+  files: ExamFileRow[] | null
+  answers: string[]
+  blank_types: BlankTypeRow[] | null
+}
+
+export async function getExamSetPreview(
+  projectName: string,
+  setName: string
+): Promise<ActionResult<{ set: ExamSetPreviewData }>> {
+  const supabase = createServiceClient()
+  try {
+    await requireTeacher()
+    const { data, error } = await supabase
+      .from('exam_questions')
+      .select('set_name, question, code, files, answers, blank_types')
+      .eq('project_name', projectName)
+      .eq('set_name', setName)
+      .single()
+    if (error) throw error
+    return {
+      success: true,
+      set: {
+        project_name: projectName,
+        set_name: data.set_name,
+        title: data.question,
+        code: data.code,
+        files: data.files,
+        answers: data.answers ?? [],
+        blank_types: data.blank_types,
+      },
+    }
+  } catch (err: any) {
+    return { success: false, error: err.message }
+  }
+}
+
 // ── ลบทั้งวิชา (ลบข้อสอบทุกชุด + เอาวิชาออกจากตาราง subjects) ──
 // exam_questions.project_name มี FK อ้าง subjects.name จึงต้องลบข้อสอบก่อนเสมอ
 export async function deleteSubject(subjectName: string): Promise<ActionResult> {

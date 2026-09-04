@@ -326,7 +326,20 @@ export default function LoginPage() {
 
             {step === 'subject' && (
               <div>
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 ml-1">เลือกวิชา</p>
+                <div className="flex items-center justify-between mb-3 ml-1">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">เลือกวิชา</p>
+                  <button
+                    type="button"
+                    onClick={() => loadSubjects(studentData.student_id)}
+                    disabled={isLoadingSubjects}
+                    className="flex items-center gap-1 text-xs text-blue-500 hover:text-blue-700 disabled:opacity-40 transition"
+                  >
+                    <svg className={`w-3.5 h-3.5 ${isLoadingSubjects ? 'animate-spin' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" /><path d="M21 3v5h-5" />
+                    </svg>
+                    รีเฟรช
+                  </button>
+                </div>
 
                 {isLoadingSubjects ? (
                   <div className="py-10 text-center text-gray-400 text-sm">

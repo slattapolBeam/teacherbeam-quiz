@@ -296,8 +296,7 @@ export default function ExamPage() {
       setTimeLeft(time)
       if (time <= 0) {
         clearInterval(timerRef.current!)
-        alert('⏳ หมดเวลาทำข้อสอบ! ระบบจะส่งคำตอบของคุณโดยอัตโนมัติ')
-        handleSubmit()
+        handleSubmitRef.current()
       }
     }, 1000)
   }

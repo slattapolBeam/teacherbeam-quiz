@@ -85,7 +85,7 @@ export default function DashboardPage() {
   const [heistWindowInput, setHeistWindowInput] = useState('10')
   const [examTimeLeft, setExamTimeLeft] = useState<number | null>(null)
   const examTimerRef = useRef<NodeJS.Timeout | null>(null)
-  const examTimeLeftRef = useRef<number>(0)
+  const examEndTimeMsRef = useRef<number>(0)
   const [gachaWinners, setGachaWinners] = useState<string[]>([])
   const [showGachaCountModal, setShowGachaCountModal] = useState(false)
   const [gachaCountInput, setGachaCountInput] = useState('')
@@ -185,6 +185,13 @@ export default function DashboardPage() {
       if (data) {
         setPinActive(true)
         setCurrentPin(data.pin_code)
+        try {
+          const stored = sessionStorage.getItem(`exam-end-time:${project}:${data.pin_code}`)
+          if (stored) {
+            const endTimeMs = parseInt(stored, 10)
+            if (endTimeMs > Date.now()) startExamTimer(endTimeMs)
+          }
+        } catch {}
       } else {
         setPinActive(false)
         setCurrentPin('')
@@ -260,34 +267,40 @@ export default function DashboardPage() {
     if (result.success) {
       setPinActive(true)
       setCurrentPin(result.pin)
-      startExamTimer(minutes * 60)
+      const endTimeMs = Date.now() + minutes * 60 * 1000
+      try { sessionStorage.setItem(`exam-end-time:${projectFilter}:${result.pin}`, String(endTimeMs)) } catch {}
+      startExamTimer(endTimeMs)
     } else {
       alert('สร้าง PIN ไม่สำเร็จ: ' + result.error)
     }
     setGeneratingPin(false)
   }
 
-  function startExamTimer(seconds: number) {
+  function startExamTimer(endTimeMs: number) {
     if (examTimerRef.current) clearInterval(examTimerRef.current)
-    examTimeLeftRef.current = seconds
-    setExamTimeLeft(seconds)
-    examTimerRef.current = setInterval(() => {
-      examTimeLeftRef.current -= 1
-      if (examTimeLeftRef.current <= 0) {
+    examEndTimeMsRef.current = endTimeMs
+
+    const tick = () => {
+      const left = Math.max(0, Math.ceil((examEndTimeMsRef.current - Date.now()) / 1000))
+      if (left <= 0) {
         clearInterval(examTimerRef.current!)
         examTimerRef.current = null
         setExamTimeLeft(null)
         doCloseSession()
       } else {
-        setExamTimeLeft(examTimeLeftRef.current)
+        setExamTimeLeft(left)
       }
-    }, 1000)
+    }
+
+    tick()
+    examTimerRef.current = setInterval(tick, 500)
   }
 
   async function doCloseSession() {
     const result = await closeSessionAction(projectFilter)
     if (result.success) {
       setPinActive(false)
+      try { sessionStorage.removeItem(`exam-end-time:${projectFilter}:${currentPin}`) } catch {}
       setCurrentPin('')
       setExamTimeLeft(null)
       if (examTimerRef.current) { clearInterval(examTimerRef.current); examTimerRef.current = null }
