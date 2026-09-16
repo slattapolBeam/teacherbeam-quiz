@@ -41,7 +41,7 @@ function escapeHtml(s: string) {
 function buildFileCode(template: string, answers: string[], blankTypes: BlankType[], startIndex: number): { code: string; nextIndex: number; errorMsg?: string } {
   let index = startIndex
   let errorMsg: string | undefined
-  const code = template.replace(/___/g, () => {
+  const code = escapeHtml(template).replace(/___/g, () => {
     const answer = answers[index]
     const meta = blankTypes[index]
     let html: string

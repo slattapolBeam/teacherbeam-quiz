@@ -75,6 +75,11 @@ export default function ExamPage() {
   const sessionRef = useRef<ActiveExamSession | null>(null)
   // ref ชี้ไปที่ handleSubmit เวอร์ชันล่าสุดเสมอ — ใช้ใน force_submit listener เพื่อหลีกเลี่ยง stale closure
   const handleSubmitRef = useRef<() => Promise<void>>(() => Promise.resolve())
+  // in-flight guards — อัพเดต synchronous ก่อน React re-render ทัน ป้องกัน double-call จริง
+  const submittingRef = useRef(false)
+  const heistLoadingRef = useRef(false)
+  const hintInFlightRef = useRef(false)
+  const superTokenInFlightRef = useRef(false)
 
   // นับจำนวนข้อจาก DOM โดยตรง (ไม่มี answers.length ให้ใช้ — เฉลยไม่ถูกส่งมาที่ client อีกต่อไป, Phase 7.2)
   function collectAnswersFromDom(): string[] {
@@ -311,6 +316,7 @@ export default function ExamPage() {
   useEffect(() => {
     // expose functions ไว้บน window เพราะ codeTemplate inject onclick string ตรง ๆ
     ;(window as any).__useHint = async (index: number) => {
+      if (hintInFlightRef.current) return
       if (hintsUsed >= 3) {
         alert('❌ คุณใช้สิทธิ์คำใบ้ปกติ (💡) ครบ 3 ครั้งแล้วครับ!\nพยายามคิดด้วยตัวเอง หรือใช้ Super Token แทนนะ')
         return
@@ -319,25 +325,31 @@ export default function ExamPage() {
       if (!confirm(`คุณมีสิทธิ์คำใบ้ปกติ (💡) เหลือ ${remaining} ครั้ง\nต้องการใช้ 1 สิทธิ์ เพื่อเติมคำใบ้ 2 ตัวอักษรลงในช่องนี้หรือไม่?`)) return
       if (!currentSetName) return
 
-      // เฉลยดึงฝั่ง server เท่านั้น (Phase 7.2) — จำนวนครั้งก็นับฝั่ง server ผ่าน session cookie กันแก้ค่าจาก devtools
-      const result = await useHint(currentSetName, index)
-      if (!result.success) {
-        alert('❌ ' + result.error)
-        return
-      }
-      setHintsUsed(result.hintsUsed)
+      hintInFlightRef.current = true
+      try {
+        // เฉลยดึงฝั่ง server เท่านั้น (Phase 7.2) — จำนวนครั้งก็นับฝั่ง server ผ่าน session cookie กันแก้ค่าจาก devtools
+        const result = await useHint(currentSetName, index)
+        if (!result.success) {
+          alert('❌ ' + result.error)
+          return
+        }
+        setHintsUsed(result.hintsUsed)
 
-      const input = codeContainerRef.current?.querySelector(`#q${index}`) as HTMLInputElement
-      if (input) {
-        input.value = result.hint
-        input.focus()
-        input.classList.add('border-blue-500', 'bg-blue-900', 'text-white')
-        setTimeout(() => input.classList.remove('border-blue-500', 'bg-blue-900', 'text-white'), 1500)
-        alert(`💡 เติมคำใบ้ "${result.hint}" ลงในช่องให้แล้วครับ!\n(เหลือสิทธิ์คำใบ้ปกติอีก ${3 - result.hintsUsed} ครั้ง)`)
+        const input = codeContainerRef.current?.querySelector(`#q${index}`) as HTMLInputElement
+        if (input) {
+          input.value = result.hint
+          input.focus()
+          input.classList.add('border-blue-500', 'bg-blue-900', 'text-white')
+          setTimeout(() => input.classList.remove('border-blue-500', 'bg-blue-900', 'text-white'), 1500)
+          alert(`💡 เติมคำใบ้ "${result.hint}" ลงในช่องให้แล้วครับ!\n(เหลือสิทธิ์คำใบ้ปกติอีก ${3 - result.hintsUsed} ครั้ง)`)
+        }
+      } finally {
+        hintInFlightRef.current = false
       }
     }
 
     ;(window as any).__useSuperToken = async (index: number) => {
+      if (superTokenInFlightRef.current) return
       if (superTokens <= 0) {
         alert('❌ คุณไม่มี Super Token เหลือแล้ว! (อาจารย์อาจจะสุ่มแจกให้ในระหว่างการสอบ)')
         return
@@ -345,22 +357,27 @@ export default function ExamPage() {
       if (!confirm(`คุณมีเหรียญ ${superTokens} เหรียญ\nต้องการใช้ 1 เหรียญ เพื่อเติมคำตอบข้อนี้ทันทีหรือไม่?`)) return
       if (!currentSetName) return
 
-      // เฉลยข้อนี้ดึงฝั่ง server ตอนใช้เหรียญเท่านั้น (Phase 7.2)
-      const result = await useSuperToken(currentSetName, index)
-      if (!result.success) {
-        alert('❌ ' + result.error)
-        return
-      }
+      superTokenInFlightRef.current = true
+      try {
+        // เฉลยข้อนี้ดึงฝั่ง server ตอนใช้เหรียญเท่านั้น (Phase 7.2)
+        const result = await useSuperToken(currentSetName, index)
+        if (!result.success) {
+          alert('❌ ' + result.error)
+          return
+        }
 
-      setSuperTokens(result.tokens)
+        setSuperTokens(result.tokens)
 
-      // ช่อง dropdown เป็น <select> ไม่มี readOnly ต้องใช้ disabled แทน
-      const el = codeContainerRef.current?.querySelector(`#q${index}`) as (HTMLInputElement | HTMLSelectElement | null)
-      if (el) {
-        el.value = result.answer
-        el.classList.add('bg-yellow-100', 'border-yellow-400', 'text-yellow-800')
-        if (el instanceof HTMLSelectElement) el.disabled = true
-        else el.readOnly = true
+        // ช่อง dropdown เป็น <select> ไม่มี readOnly ต้องใช้ disabled แทน
+        const el = codeContainerRef.current?.querySelector(`#q${index}`) as (HTMLInputElement | HTMLSelectElement | null)
+        if (el) {
+          el.value = result.answer
+          el.classList.add('bg-yellow-100', 'border-yellow-400', 'text-yellow-800')
+          if (el instanceof HTMLSelectElement) el.disabled = true
+          else el.readOnly = true
+        }
+      } finally {
+        superTokenInFlightRef.current = false
       }
     }
   }, [hintsUsed, superTokens, currentSetName])
@@ -439,20 +456,26 @@ export default function ExamPage() {
   }
 
   async function handleInitiateHeist() {
-    if (heistLoading || heistAttacking) return
+    if (heistLoadingRef.current || heistAttacking) return
+    heistLoadingRef.current = true
     setHeistLoading(true)
-    const result = await initiateHeist()
-    setHeistLoading(false)
-    if (!result.success) {
-      setHeistErrorMsg(result.error)
-      return
+    try {
+      const result = await initiateHeist()
+      if (!result.success) {
+        setHeistErrorMsg(result.error)
+        return
+      }
+      setHeistAttacking({ heistId: result.heistId, snippet: result.snippet, victimName: result.victimName, heistWindowSecs: result.heistWindowSecs, deadline: result.deadline })
+    } finally {
+      heistLoadingRef.current = false
+      setHeistLoading(false)
     }
-    setHeistAttacking({ heistId: result.heistId, snippet: result.snippet, victimName: result.victimName, heistWindowSecs: result.heistWindowSecs, deadline: result.deadline })
   }
 
   // ── Submit ───────────────────────────────────────────────
   async function handleSubmit() {
-    if (!currentExamSet || !session) return
+    if (submittingRef.current || !currentExamSet || !session) return
+    submittingRef.current = true
     setIsSubmitting(true)
     if (timerRef.current) clearInterval(timerRef.current)
 
@@ -467,6 +490,7 @@ export default function ExamPage() {
     if (!result.success) {
       alert('ส่งข้อมูลไม่สำเร็จ กรุณาแจ้งอาจารย์ผู้สอน\n' + result.error)
       setIsSubmitting(false)
+      submittingRef.current = false
       return
     }
 
