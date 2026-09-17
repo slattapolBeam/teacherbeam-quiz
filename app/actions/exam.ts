@@ -20,7 +20,7 @@ type SubmitExamInput = {
 }
 
 type SubmitExamResult =
-  | { success: true; score: number }
+  | { success: true; score: number; maxScore: number }
   | { success: false; error: string }
 
 function normalize(value: string) {
@@ -86,7 +86,7 @@ export async function submitExam(input: SubmitExamInput): Promise<SubmitExamResu
     exam_set: input.exam_set, score,
   })
 
-  return { success: true, score }
+  return { success: true, score, maxScore }
 }
 
 type ExamFileOut = { filename: string; codeTemplate: string }
