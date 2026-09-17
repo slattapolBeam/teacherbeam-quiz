@@ -54,22 +54,23 @@ export async function submitExam(input: SubmitExamInput): Promise<SubmitExamResu
   }
 
   const { data: row, error: rowErr } = await supabase.from('exam_questions')
-    .select('answers').eq('project_name', session.project_name).eq('set_name', input.exam_set).single()
+    .select('answers, max_score').eq('project_name', session.project_name).eq('set_name', input.exam_set).single()
   if (rowErr || !row) {
     return { success: false, error: 'ไม่พบข้อสอบชุดนี้ในระบบ' }
   }
 
   const correctAnswers = row.answers as string[]
   const totalQuestions = correctAnswers.length
+  const maxScore: number = (row.max_score as number) ?? 10
   let score = 0
 
   for (let i = 0; i < totalQuestions; i++) {
     const studentAnswer = input.student_answers[i] || ''
     if (isCorrect(studentAnswer, correctAnswers[i])) {
-      score += 10 / totalQuestions
+      score += maxScore / totalQuestions
     }
   }
-  score = Math.round(score * 10) / 10
+  score = Math.round(score)
 
   const { error: insertErr } = await supabase.from('exam_results').insert([{
     student_id: session.student_id,

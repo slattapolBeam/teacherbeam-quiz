@@ -22,6 +22,7 @@ type ParsedSet = {
 type ValidationResult = {
   valid: boolean
   projectName: string
+  maxScore: number
   sets: ParsedSet[]
   errorMsg?: string
 }
@@ -30,6 +31,7 @@ type ExistingSetRow = {
   project_name: string
   set_name: string
   question: string
+  max_score: number
 }
 
 function escapeHtml(s: string) {
@@ -187,15 +189,17 @@ export default function ImportPage() {
     }
 
     if (!data.project_name || !data.sets || typeof data.sets !== 'object') {
-      setValidation({ valid: false, projectName: '', sets: [], errorMsg: 'โครงสร้างไม่ถูกต้อง ต้องมี "project_name" และ "sets"' })
+      setValidation({ valid: false, projectName: '', maxScore: 10, sets: [], errorMsg: 'โครงสร้างไม่ถูกต้อง ต้องมี "project_name" และ "sets"' })
       return
     }
 
     const setNames = Object.keys(data.sets)
     if (setNames.length === 0) {
-      setValidation({ valid: false, projectName: data.project_name, sets: [], errorMsg: '"sets" ต้องมีอย่างน้อย 1 ชุด' })
+      setValidation({ valid: false, projectName: data.project_name, maxScore: 10, sets: [], errorMsg: '"sets" ต้องมีอย่างน้อย 1 ชุด' })
       return
     }
+
+    const maxScore: number = typeof data.max_score === 'number' && data.max_score > 0 ? data.max_score : 10
 
     const parsedSets: ParsedSet[] = setNames.map(setName => {
       const set = data.sets[setName] || {}
@@ -218,6 +222,7 @@ export default function ImportPage() {
     setValidation({
       valid: !firstError,
       projectName: data.project_name,
+      maxScore,
       sets: parsedSets,
       errorMsg: firstError ? `${firstError.setName}: ${firstError.errorMsg}` : undefined,
     })
@@ -240,6 +245,7 @@ export default function ImportPage() {
       files: s.files,
       answers: s.answers,
       blank_types: s.blankTypes.some(b => b) ? s.blankTypes : null,
+      max_score: validation.maxScore,
     }))
 
     const result = await saveExamQuestions(validation.projectName, setNames, saveMode, rows)
@@ -403,7 +409,7 @@ export default function ImportPage() {
 
             {validation.valid && (
               <div className="bg-green-50 border border-green-200 rounded-2xl p-4 mb-3">
-                <p className="text-sm font-medium text-green-900">✓ ตรวจสอบผ่าน พร้อมบันทึก {validation.sets.length} ชุด สำหรับวิชา "{validation.projectName}"</p>
+                <p className="text-sm font-medium text-green-900">✓ ตรวจสอบผ่าน พร้อมบันทึก {validation.sets.length} ชุด สำหรับวิชา "{validation.projectName}" — คะแนนเต็ม {validation.maxScore} คะแนน</p>
               </div>
             )}
 
@@ -530,6 +536,7 @@ export default function ImportPage() {
                               <p className="text-xs text-gray-400 truncate max-w-[320px]">{s.question}</p>
                             </div>
                             <div className="flex items-center gap-1.5 shrink-0">
+                              <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full whitespace-nowrap">{s.max_score} คะแนน</span>
                               <button
                                 onClick={() => handlePreview(s.project_name, s.set_name)}
                                 disabled={loadingPreviewKey === key}

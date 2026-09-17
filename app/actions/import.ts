@@ -19,11 +19,12 @@ type ExamQuestionRow = {
   answers: string[]
   // ขนานกับ answers ทีละตำแหน่ง — null = ช่องเติมคำแบบเดิม
   blank_types: BlankTypeRow[] | null
+  max_score: number
 }
 
 type ActionResult<T extends object = {}> = ({ success: true } & T) | { success: false; error: string }
 
-type ExistingSetRow = { project_name: string; set_name: string; question: string }
+type ExistingSetRow = { project_name: string; set_name: string; question: string; max_score: number }
 
 // ── รายการชุดข้อสอบที่มีอยู่แล้ว (ไม่มี answers) — เดิมหน้า import อ่านผ่าน anon key ตรง ๆ
 // ย้ายมาเป็น Server Action เพราะ exam_questions ถอด anon SELECT ออกหมดแล้ว (Phase 7.2) ──
@@ -32,9 +33,9 @@ export async function listExamSets(): Promise<ActionResult<{ sets: ExistingSetRo
   try {
     await requireTeacher()
     const { data, error } = await supabase.from('exam_questions')
-      .select('project_name, set_name, question').order('project_name').order('set_name')
+      .select('project_name, set_name, question, max_score').order('project_name').order('set_name')
     if (error) throw error
-    return { success: true, sets: data || [] }
+    return { success: true, sets: (data || []).map((r: any) => ({ ...r, max_score: r.max_score ?? 10 })) }
   } catch (err: any) {
     return { success: false, error: err.message }
   }
@@ -118,6 +119,7 @@ export type ExamSetPreviewData = {
   files: ExamFileRow[] | null
   answers: string[]
   blank_types: BlankTypeRow[] | null
+  max_score: number
 }
 
 export async function getExamSetPreview(
@@ -129,7 +131,7 @@ export async function getExamSetPreview(
     await requireTeacher()
     const { data, error } = await supabase
       .from('exam_questions')
-      .select('set_name, question, code, files, answers, blank_types')
+      .select('set_name, question, code, files, answers, blank_types, max_score')
       .eq('project_name', projectName)
       .eq('set_name', setName)
       .single()
@@ -144,6 +146,7 @@ export async function getExamSetPreview(
         files: data.files,
         answers: data.answers ?? [],
         blank_types: data.blank_types,
+        max_score: data.max_score ?? 10,
       },
     }
   } catch (err: any) {
