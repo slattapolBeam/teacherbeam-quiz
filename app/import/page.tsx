@@ -176,7 +176,7 @@ export default function ImportPage() {
     setSaveMessage(null)
     const raw = jsonInput.trim()
     if (!raw) {
-      setValidation({ valid: false, projectName: '', sets: [], errorMsg: 'กรุณาวาง JSON ก่อนกดตรวจสอบ' })
+      setValidation({ valid: false, projectName: '', maxScore: 10, sets: [], errorMsg: 'กรุณาวาง JSON ก่อนกดตรวจสอบ' })
       return
     }
 
@@ -184,7 +184,7 @@ export default function ImportPage() {
     try {
       data = JSON.parse(raw)
     } catch (err: any) {
-      setValidation({ valid: false, projectName: '', sets: [], errorMsg: 'JSON ไม่ถูกต้อง: ' + err.message })
+      setValidation({ valid: false, projectName: '', maxScore: 10, sets: [], errorMsg: 'JSON ไม่ถูกต้อง: ' + err.message })
       return
     }
 
