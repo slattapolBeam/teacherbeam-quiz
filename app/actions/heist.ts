@@ -9,6 +9,7 @@ const COOLDOWN_MS = 30_000
 const MAX_PER_SESSION = 5
 const MIN_LEN = 4
 const MAX_LEN = 40
+const ACTIVE_MS = 20_000      // victim ต้องมี heartbeat ภายในช่วงนี้ (client ส่งทุก ~6 วิ)
 const MAX_TOKENS = 3
 
 // ต้องพิมพ์ในช่อง input บรรทัดเดียวได้ และมองเห็นครบทุกตัวอักษรใน UI
@@ -108,14 +109,23 @@ export async function initiateHeist(): Promise<InitiateResult> {
     if (participants) participantSet = new Set(participants.map((r: any) => r.actor_id as string))
   } catch {}
 
+  // เฉพาะคนที่ยังเปิดหน้าสอบอยู่ (heartbeat ล่าสุด) — คนปิดแท็บ/เน็ตหลุดป้องกันไม่ได้ จึงไม่ควรเป็นเหยื่อ
+  // ถ้า query ล้ม (เช่นยังไม่ได้สร้างตาราง exam_presence) ให้ข้ามตัวกรองนี้ ไม่ให้ระบบ heist ใช้ไม่ได้ทั้งหมด
+  const { data: presence, error: presenceErr } = await supabase
+    .from('exam_presence').select('student_id')
+    .eq('project_name', project_name)
+    .gte('last_seen_at', new Date(Date.now() - ACTIVE_MS).toISOString())
+  const activeSet = presenceErr ? null : new Set((presence ?? []).map((r: any) => r.student_id as string))
+
   const valid = candidates.filter((c: any) =>
     !submittedSet.has(c.student_id) &&
     !targetedSet.has(c.student_id) &&
     !underAttackSet.has(c.student_id) &&
+    (activeSet === null || activeSet.has(c.student_id)) &&
     (participantSet === null || participantSet.has(c.student_id))
   )
   if (!valid.length)
-    return { success: false, error: 'ไม่มีเป้าหมายที่ถูกต้องในขณะนี้ (ส่งข้อสอบแล้ว, ถูกปล้นไปแล้ว หรือกำลังถูกคนอื่นปล้นอยู่)' }
+    return { success: false, error: 'ไม่มีเป้าหมายที่ถูกต้องในขณะนี้ (ส่งข้อสอบแล้ว, ออฟไลน์, ถูกปล้นไปแล้ว หรือกำลังถูกคนอื่นปล้นอยู่)' }
 
   const victim = valid[Math.floor(Math.random() * valid.length)]
 
@@ -292,11 +302,18 @@ export type PendingHeistInfo = {
   serverNow: string
 } | null
 
-export async function getPendingHeistForVictim(): Promise<PendingHeistInfo> {
+export async function getPendingHeistForVictim(touchPresence = false): Promise<PendingHeistInfo> {
   const session = await getExamSession()
   if (!session || session.mode !== 'exam') return null
 
   const supabase = createServiceClient()
+  if (touchPresence) {
+    // heartbeat — ผิดพลาดได้ ไม่กระทบการแสดง heist
+    await supabase.from('exam_presence').upsert(
+      { student_id: session.student_id, project_name: session.project_name, last_seen_at: new Date().toISOString() },
+      { onConflict: 'student_id' },
+    )
+  }
   const windowMs = (session.heist_window_seconds ?? 10) * 1000
   const cutoff = new Date(Date.now() - windowMs).toISOString()
 

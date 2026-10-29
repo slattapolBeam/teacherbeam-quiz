@@ -409,9 +409,11 @@ export default function ExamPage() {
   // ── Fallback poll: จับ heist ที่ broadcast พลาด (ทุก 2 วิ) ────────────
   useEffect(() => {
     if (!session || session.mode !== 'exam' || showSuccessModal) return
+    let tick = 0
     const poll = setInterval(async () => {
       if (heistIncomingRef.current) return
-      const pending = await getPendingHeistForVictim()
+      // ทุก 3 รอบ (~6 วิ) แนบ heartbeat ไปด้วย เพื่อให้ผู้ปล้นรู้ว่าเราอยู่หน้าสอบ
+      const pending = await getPendingHeistForVictim(tick++ % 3 === 0)
       if (pending && !heistIncomingRef.current) setHeistIncoming({ ...pending, clockOffsetMs: clockOffset(pending.serverNow) })
     }, 2000)
     return () => clearInterval(poll)
