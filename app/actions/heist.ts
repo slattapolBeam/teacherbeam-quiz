@@ -143,8 +143,7 @@ export async function initiateHeist(): Promise<InitiateResult> {
     }]).select('id').single()
 
   if (heistErr || !heistRow) {
-    await supabase.from('students')
-      .update({ super_tokens: attacker.super_tokens }).eq('student_id', student_id)
+    await supabase.rpc('grant_super_tokens', { p_student_id: student_id, p_amount: 1, p_max: MAX_TOKENS })
     return { success: false, error: `บันทึกการปล้นไม่สำเร็จ: ${heistErr?.message ?? 'ไม่มีข้อมูลแถว'}` }
   }
 
@@ -192,43 +191,23 @@ export async function resolveHeistAttacker(heistId: number): Promise<ResolveResu
 
   const supabase = createServiceClient()
   const heistWindowMs = (session.heist_window_seconds ?? 10) * 1000
-  // created_at must be ≤ NOW() - window (window fully elapsed)
-  const windowEnd = new Date(Date.now() - heistWindowMs).toISOString()
 
-  const { data: updated } = await supabase
-    .from('token_heist_log')
-    .update({ outcome: 'success', resolved_at: new Date().toISOString() })
-    .eq('id', heistId).eq('attacker_id', session.student_id).eq('outcome', 'pending')
-    .lte('created_at', windowEnd)
-    .select('victim_id, stake_amount').maybeSingle()
+  // claim + steal + payout run in one DB transaction (docs/sql/heist_atomic.sql)
+  const { data, error } = await supabase.rpc('resolve_heist_success', {
+    p_heist_id: heistId, p_attacker_id: session.student_id,
+    p_window_ms: heistWindowMs, p_max: MAX_TOKENS,
+  })
+  if (error) return { success: false, error: error.message }
 
-  if (!updated) {
-    // Either already defended, or called too early
+  const row = Array.isArray(data) ? data[0] : data
+  // Either already defended, or called too early
+  if (!row || row.outcome !== 'success') {
     return { success: true, outcome: 'already_resolved', tokensGained: 0 }
   }
-
-  // Transfer: stake refund (+1) + steal 1 from victim (if still has ≥1)
-  const { data: vicData } = await supabase
-    .from('students').select('super_tokens').eq('student_id', updated.victim_id).single()
-
-  let stolen = 0
-  if (vicData && vicData.super_tokens >= 1) {
-    await supabase.from('students')
-      .update({ super_tokens: vicData.super_tokens - 1 })
-      .eq('student_id', updated.victim_id).gte('super_tokens', 1)
-    stolen = 1
-  }
-
-  const { data: atkData } = await supabase
-    .from('students').select('super_tokens').eq('student_id', session.student_id).single()
-  const gained = updated.stake_amount + stolen
-  const newAtkTokens = Math.min((atkData?.super_tokens ?? 0) + gained, MAX_TOKENS)
-  await supabase.from('students')
-    .update({ super_tokens: newAtkTokens })
-    .eq('student_id', session.student_id)
+  const gained: number = row.tokens_gained
 
   await logActivity({ type: 'student', id: session.student_id }, 'heist_success', session.project_name, {
-    heist_id: heistId, victim_id: updated.victim_id, gained,
+    heist_id: heistId, gained,
   })
 
   return { success: true, outcome: 'success', tokensGained: gained }
@@ -263,24 +242,15 @@ export async function defendHeist(heistId: number, typedText: string): Promise<D
   // Exact case-sensitive match
   if (typedText !== row.snippet) return { success: true, defended: false }
 
-  // Try to claim defended — outcome='pending' WHERE clause prevents double resolution atomically
-  const { data: claimed } = await supabase
-    .from('token_heist_log')
-    .update({ outcome: 'defended', resolved_at: new Date().toISOString() })
-    .eq('id', heistId).eq('victim_id', session.student_id).eq('outcome', 'pending')
-    .select('stake_amount, attacker_id').maybeSingle()
-
+  // Claim (outcome='pending' guard) + pay stake to victim in one DB transaction
+  const { data: claimed, error } = await supabase.rpc('defend_heist_claim', {
+    p_heist_id: heistId, p_victim_id: session.student_id, p_max: MAX_TOKENS,
+  })
+  if (error) return { success: false, error: error.message }
   if (!claimed) return { success: true, defended: false } // race: attacker resolved first
 
-  // Give stake to victim (capped at MAX_TOKENS)
-  const { data: vicData } = await supabase
-    .from('students').select('super_tokens').eq('student_id', session.student_id).single()
-  await supabase.from('students')
-    .update({ super_tokens: Math.min((vicData?.super_tokens ?? 0) + claimed.stake_amount, MAX_TOKENS) })
-    .eq('student_id', session.student_id)
-
   await logActivity({ type: 'student', id: session.student_id }, 'heist_defended', session.project_name, {
-    heist_id: heistId, attacker_id: claimed.attacker_id,
+    heist_id: heistId, attacker_id: row.attacker_id,
   })
 
   return { success: true, defended: true }
