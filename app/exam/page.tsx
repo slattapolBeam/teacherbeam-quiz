@@ -406,6 +406,8 @@ export default function ExamPage() {
   // server time − client time ที่ ณ ตอนรับข้อมูล ใช้ชดเชยนาฬิกาเครื่องนักเรียนที่เพี้ยน
   const clockOffset = (serverNow: string) => new Date(serverNow).getTime() - Date.now()
 
+  function blockClipboard(e: React.SyntheticEvent) { e.preventDefault() }
+
   // ── Fallback poll: จับ heist ที่ broadcast พลาด (ทุก 2 วิ) ────────────
   useEffect(() => {
     if (!session || session.mode !== 'exam' || showSuccessModal) return
@@ -639,7 +641,15 @@ export default function ExamPage() {
               </div>
             )}
             <div className="p-6">
-              <div ref={codeContainerRef} className="code-block text-sm sm:text-base">
+              <div
+                ref={codeContainerRef}
+                className="code-block text-sm sm:text-base"
+                {...(isReview ? {} : {
+                  // กัน copy/paste ในโหมดสอบ (innerHTML ที่ inject มา event bubble ขึ้นมาถึง container นี้)
+                  onPaste: blockClipboard, onCopy: blockClipboard, onCut: blockClipboard,
+                  onDrop: blockClipboard, onDragStart: blockClipboard, onContextMenu: blockClipboard,
+                })}
+              >
                 {/* HTML จาก exam database จะถูก inject เข้ามาผ่าน useEffect */}
                 กำลังโหลดข้อสอบ...
               </div>
@@ -924,7 +934,7 @@ export default function ExamPage() {
       {/* Heist: Attacker waiting modal */}
       {heistAttacking && (
         <HeistAttackerModal
-          key={heistAttacking.heistId}
+          key={`attacker-${heistAttacking.heistId}`}
           heistId={heistAttacking.heistId}
           snippet={heistAttacking.snippet}
           victimName={heistAttacking.victimName}
@@ -938,7 +948,7 @@ export default function ExamPage() {
       {/* Heist: Victim defense modal */}
       {heistIncoming && (
         <HeistVictimModal
-          key={heistIncoming.heistId}
+          key={`victim-${heistIncoming.heistId}`}
           heistId={heistIncoming.heistId}
           snippet={heistIncoming.snippet}
           attackerName={heistIncoming.attackerName}

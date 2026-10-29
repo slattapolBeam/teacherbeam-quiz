@@ -104,7 +104,7 @@ export function HeistAttackerModal({ heistId, snippet, victimName, heistWindowSe
 
             {/* Snippet preview */}
             <p className="text-xs text-gray-500 mb-2">โจทย์ที่เป้าหมายต้องพิมพ์:</p>
-            <div className="bg-gray-900 text-green-400 font-mono text-sm px-4 py-3 rounded-xl text-left break-all leading-relaxed mb-4">
+            <div className="bg-gray-900 text-green-400 font-mono text-sm px-4 py-3 rounded-xl text-left break-all leading-relaxed mb-4 select-none">
               {snippet}
             </div>
 
@@ -258,7 +258,12 @@ export function HeistVictimModal({ heistId, snippet, attackerName, deadline, clo
             </div>
 
             <p className="text-xs text-gray-500 mb-1">พิมพ์ข้อความต่อไปนี้ให้ถูกต้องทุกตัวอักษร (case-sensitive):</p>
-            <div className="bg-gray-900 text-green-400 font-mono text-sm px-4 py-3 rounded-xl text-left break-all leading-relaxed mb-3">
+            <div
+              className="bg-gray-900 text-green-400 font-mono text-sm px-4 py-3 rounded-xl text-left break-all leading-relaxed mb-3 select-none"
+              onCopy={e => e.preventDefault()}
+              onDragStart={e => e.preventDefault()}
+              onContextMenu={e => e.preventDefault()}
+            >
               {snippet}
             </div>
 
