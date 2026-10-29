@@ -12,7 +12,7 @@ export const metadata: Metadata = {
   description: 'ระบบข้อสอบ Coding',
 }
 
-const APP_VERSION = '1.5.0'
+const APP_VERSION = '1.6.0'
 
 export default function RootLayout({
   children,
