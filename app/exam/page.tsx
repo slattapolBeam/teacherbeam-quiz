@@ -450,13 +450,17 @@ export default function ExamPage() {
       .on('broadcast', { event: 'heist_attack' }, (msg: any) => {
         const p = msg.payload || {}
         if (p.victim_id !== activeSession.student_id) return
-        setHeistIncoming({
+        // ถ้ากำลังมี modal ป้องกันอยู่ ห้ามทับ — heist ใหม่จะถูก poll หยิบมาเองหลังปิด modal (ถ้ายังไม่หมดเวลา)
+        if (heistIncomingRef.current) return
+        const info: HeistVictimInfo = {
           heistId: p.heist_id,
           snippet: p.snippet,
           attackerName: p.attacker_name,
           deadline: p.deadline,
           clockOffsetMs: p.server_now ? clockOffset(p.server_now) : 0,
-        })
+        }
+        heistIncomingRef.current = info
+        setHeistIncoming(info)
       }).subscribe()
   }
 
@@ -918,6 +922,7 @@ export default function ExamPage() {
       {/* Heist: Attacker waiting modal */}
       {heistAttacking && (
         <HeistAttackerModal
+          key={heistAttacking.heistId}
           heistId={heistAttacking.heistId}
           snippet={heistAttacking.snippet}
           victimName={heistAttacking.victimName}
@@ -931,6 +936,7 @@ export default function ExamPage() {
       {/* Heist: Victim defense modal */}
       {heistIncoming && (
         <HeistVictimModal
+          key={heistIncoming.heistId}
           heistId={heistIncoming.heistId}
           snippet={heistIncoming.snippet}
           attackerName={heistIncoming.attackerName}

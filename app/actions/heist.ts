@@ -77,6 +77,13 @@ export async function initiateHeist(): Promise<InitiateResult> {
     .eq('attacker_id', student_id).eq('project_name', project_name)
   const targetedSet = new Set((alreadyTargeted ?? []).map((r: any) => r.victim_id as string))
 
+  // victims ที่กำลังถูกปล้นอยู่ (heist pending ยังอยู่ในหน้าต่างเวลา) — ป้องกันได้ทีละอันเท่านั้น
+  const { data: underAttack } = await supabase
+    .from('token_heist_log').select('victim_id')
+    .eq('project_name', project_name).eq('outcome', 'pending')
+    .gte('created_at', new Date(Date.now() - heistWindowMs - TOLERANCE_MS).toISOString())
+  const underAttackSet = new Set((underAttack ?? []).map((r: any) => r.victim_id as string))
+
   // เฉพาะ นศ. ที่เข้าสอบจริงด้วย PIN นี้ (มี exam_session_start ใน activity_logs)
   let participantSet: Set<string> | null = null
   try {
@@ -93,10 +100,11 @@ export async function initiateHeist(): Promise<InitiateResult> {
   const valid = candidates.filter((c: any) =>
     !submittedSet.has(c.student_id) &&
     !targetedSet.has(c.student_id) &&
+    !underAttackSet.has(c.student_id) &&
     (participantSet === null || participantSet.has(c.student_id))
   )
   if (!valid.length)
-    return { success: false, error: 'ไม่มีเป้าหมายที่ถูกต้องในขณะนี้ (ส่งข้อสอบแล้ว หรือ Protection window)' }
+    return { success: false, error: 'ไม่มีเป้าหมายที่ถูกต้องในขณะนี้ (ส่งข้อสอบแล้ว, ถูกปล้นไปแล้ว หรือกำลังถูกคนอื่นปล้นอยู่)' }
 
   const victim = valid[Math.floor(Math.random() * valid.length)]
 
