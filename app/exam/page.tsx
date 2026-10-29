@@ -133,8 +133,15 @@ export default function ExamPage() {
   // marker "useSuperToken(N)" = ช่อง dropdown (มีแค่ปุ่ม Super Token เพราะเผยคำใบ้บางส่วนไม่มีประโยชน์เมื่อมีตัวเลือกให้ไม่กี่อัน)
   function wireButtons(html: string): string {
     return html
-      .replace(/<button class="hint-btn" onclick="useHint\((\d+)\)">💡<\/button>/g, '')
-      .replace(/<button class="hint-btn" onclick="useSuperToken\((\d+)\)">🌟<\/button>/g, '')
+      .replace(
+        /<button class="hint-btn" onclick="useHint\((\d+)\)">💡<\/button>/g,
+        `<button class="hint-btn" onclick="window.__useHint($1)" title="ดูคำใบ้ (จำกัด 3 ครั้ง)">💡</button>
+         <button class="hint-btn super-btn" onclick="window.__useSuperToken($1)" title="ใช้ Super Token เติมคำตอบ"><img src="/gamecoin.png" style="width:18px;height:18px;display:inline;vertical-align:middle;" alt="coin" /></button>`
+      )
+      .replace(
+        /<button class="hint-btn" onclick="useSuperToken\((\d+)\)">🌟<\/button>/g,
+        `<button class="hint-btn super-btn" onclick="window.__useSuperToken($1)" title="ใช้ Super Token เติมคำตอบ"><img src="/gamecoin.png" style="width:18px;height:18px;display:inline;vertical-align:middle;" alt="coin" /></button>`
+      )
   }
 
   // ── Init ────────────────────────────────────────────────
@@ -571,12 +578,10 @@ export default function ExamPage() {
                   </button>
                 </div>
               )}
-              {false && (
               <div className="hidden sm:flex items-center gap-1.5 bg-yellow-50 px-3 py-1.5 rounded-full border border-yellow-200 shadow-sm">
                 <img src="/gamecoin.png" className="w-6 h-6" alt="coin" />
                 <span className="font-bold text-yellow-700 text-lg">{superTokens}</span>
               </div>
-              )}
               <div className="hidden md:block text-right">
                 <p className="text-sm font-semibold text-gray-900">{session.full_name}</p>
                 <p className="text-xs text-gray-500">{session.student_id} • ห้อง {session.room} เลขที่ {session.class_number}</p>
