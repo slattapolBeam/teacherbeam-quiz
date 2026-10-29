@@ -61,8 +61,8 @@ export default function ExamPage() {
   const [tutorialVisible, setTutorialVisible] = useState(false)
 
   // Heist states
-  type HeistAttackerInfo = { heistId: number; snippet: string; victimName: string; heistWindowSecs: number; deadline: string }
-  type HeistVictimInfo = { heistId: number; snippet: string; attackerName: string; deadline: string }
+  type HeistAttackerInfo = { heistId: number; snippet: string; victimName: string; heistWindowSecs: number; deadline: string; clockOffsetMs: number }
+  type HeistVictimInfo = { heistId: number; snippet: string; attackerName: string; deadline: string; clockOffsetMs: number }
   const [heistAttacking, setHeistAttacking] = useState<HeistAttackerInfo | null>(null)
   const [heistIncoming, setHeistIncoming] = useState<HeistVictimInfo | null>(null)
   const heistIncomingRef = useRef<HeistVictimInfo | null>(null)
@@ -403,13 +403,16 @@ export default function ExamPage() {
   // ── Sync heistIncoming → ref (ให้ interval callback อ่านค่าล่าสุดได้) ──
   useEffect(() => { heistIncomingRef.current = heistIncoming }, [heistIncoming])
 
+  // server time − client time ที่ ณ ตอนรับข้อมูล ใช้ชดเชยนาฬิกาเครื่องนักเรียนที่เพี้ยน
+  const clockOffset = (serverNow: string) => new Date(serverNow).getTime() - Date.now()
+
   // ── Fallback poll: จับ heist ที่ broadcast พลาด (ทุก 2 วิ) ────────────
   useEffect(() => {
     if (!session || session.mode !== 'exam' || showSuccessModal) return
     const poll = setInterval(async () => {
       if (heistIncomingRef.current) return
       const pending = await getPendingHeistForVictim()
-      if (pending && !heistIncomingRef.current) setHeistIncoming(pending)
+      if (pending && !heistIncomingRef.current) setHeistIncoming({ ...pending, clockOffsetMs: clockOffset(pending.serverNow) })
     }, 2000)
     return () => clearInterval(poll)
   }, [session, showSuccessModal])
@@ -452,6 +455,7 @@ export default function ExamPage() {
           snippet: p.snippet,
           attackerName: p.attacker_name,
           deadline: p.deadline,
+          clockOffsetMs: p.server_now ? clockOffset(p.server_now) : 0,
         })
       }).subscribe()
   }
@@ -466,7 +470,7 @@ export default function ExamPage() {
         setHeistErrorMsg(result.error)
         return
       }
-      setHeistAttacking({ heistId: result.heistId, snippet: result.snippet, victimName: result.victimName, heistWindowSecs: result.heistWindowSecs, deadline: result.deadline })
+      setHeistAttacking({ heistId: result.heistId, snippet: result.snippet, victimName: result.victimName, heistWindowSecs: result.heistWindowSecs, deadline: result.deadline, clockOffsetMs: clockOffset(result.serverNow) })
     } finally {
       heistLoadingRef.current = false
       setHeistLoading(false)
@@ -919,6 +923,7 @@ export default function ExamPage() {
           victimName={heistAttacking.victimName}
           heistWindowSecs={heistAttacking.heistWindowSecs}
           deadline={heistAttacking.deadline}
+          clockOffsetMs={heistAttacking.clockOffsetMs}
           onDone={() => setHeistAttacking(null)}
         />
       )}
@@ -930,6 +935,7 @@ export default function ExamPage() {
           snippet={heistIncoming.snippet}
           attackerName={heistIncoming.attackerName}
           deadline={heistIncoming.deadline}
+          clockOffsetMs={heistIncoming.clockOffsetMs}
           onDone={() => setHeistIncoming(null)}
         />
       )}

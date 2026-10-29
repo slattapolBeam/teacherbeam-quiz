@@ -13,15 +13,19 @@ interface AttackerProps {
   victimName: string
   heistWindowSecs: number
   deadline: string
+  clockOffsetMs: number   // server time − client time
   onDone: () => void
 }
 
-type AttackerPhase = 'countdown' | 'resolving' | 'success' | 'defended'
+type AttackerPhase = 'countdown' | 'resolving' | 'success' | 'defended' | 'error'
 
-export function HeistAttackerModal({ heistId, snippet, victimName, heistWindowSecs, deadline, onDone }: AttackerProps) {
+const RESOLVE_RETRIES = 6
+const RESOLVE_RETRY_MS = 600
+
+export function HeistAttackerModal({ heistId, snippet, victimName, heistWindowSecs, deadline, clockOffsetMs, onDone }: AttackerProps) {
   const TOTAL = heistWindowSecs
   const [secsLeft, setSecsLeft] = useState(() =>
-    Math.max(0, (new Date(deadline).getTime() - Date.now()) / 1000)
+    Math.max(0, (new Date(deadline).getTime() - (Date.now() + clockOffsetMs)) / 1000)
   )
   const [phase, setPhase] = useState<AttackerPhase>('countdown')
   const [gained, setGained] = useState(0)
@@ -29,7 +33,7 @@ export function HeistAttackerModal({ heistId, snippet, victimName, heistWindowSe
 
   useEffect(() => {
     const tick = setInterval(() => {
-      const remaining = Math.max(0, (new Date(deadline).getTime() - Date.now()) / 1000)
+      const remaining = Math.max(0, (new Date(deadline).getTime() - (Date.now() + clockOffsetMs)) / 1000)
       setSecsLeft(remaining)
       if (remaining <= 0) {
         clearInterval(tick)
@@ -43,12 +47,22 @@ export function HeistAttackerModal({ heistId, snippet, victimName, heistWindowSe
     if (resolvedRef.current) return
     resolvedRef.current = true
     setPhase('resolving')
-    const result = await resolveHeistAttacker(heistId)
-    if (!result.success || result.outcome === 'already_resolved') {
-      setPhase('defended')
-    } else {
-      setGained(result.tokensGained)
-      setPhase('success')
+    try {
+      for (let i = 0; i <= RESOLVE_RETRIES; i++) {
+        const result = await resolveHeistAttacker(heistId)
+        if (!result.success) { setPhase('error'); return }
+        if (result.outcome === 'too_early') {
+          await new Promise(r => setTimeout(r, RESOLVE_RETRY_MS))
+          continue
+        }
+        if (result.outcome === 'already_resolved') { setPhase('defended'); return }
+        setGained(result.tokensGained)
+        setPhase('success')
+        return
+      }
+      setPhase('error')
+    } catch {
+      setPhase('error')
     }
   }
 
@@ -114,6 +128,18 @@ export function HeistAttackerModal({ heistId, snippet, victimName, heistWindowSe
               รับรางวัลและทำข้อสอบต่อ
             </button>
           </div>
+        ) : phase === 'error' ? (
+          <div className="p-6 text-center">
+            <div className="text-6xl mb-3">⚠️</div>
+            <h3 className="text-xl font-bold text-gray-900 mb-1">ตรวจผลไม่สำเร็จ</h3>
+            <p className="text-gray-500 text-sm mb-5">เชื่อมต่อไม่ได้ ผลการปล้นจะถูกบันทึกตามจริง ดูยอดเหรียญที่มุมบนหลังเน็ตกลับมา</p>
+            <button
+              onClick={onDone}
+              className="w-full py-3 bg-gray-900 text-white font-semibold rounded-xl active:scale-95 transition"
+            >
+              ปิดและทำข้อสอบต่อ
+            </button>
+          </div>
         ) : (
           <div className="p-6 text-center">
             <div className="text-6xl mb-3">🛡️</div>
@@ -140,7 +166,8 @@ interface VictimProps {
   heistId: number
   snippet: string
   attackerName: string
-  deadline: string   // ISO timestamp
+  deadline: string   // ISO timestamp (server time)
+  clockOffsetMs: number   // server time − client time
   onDone: () => void
 }
 
@@ -148,10 +175,10 @@ const MIN_USABLE_SECS = 1.5
 
 type VictimPhase = 'typing' | 'submitting' | 'defended' | 'failed'
 
-export function HeistVictimModal({ heistId, snippet, attackerName, deadline, onDone }: VictimProps) {
+export function HeistVictimModal({ heistId, snippet, attackerName, deadline, clockOffsetMs, onDone }: VictimProps) {
   const [typed, setTyped] = useState('')
   const [secsLeft, setSecsLeft] = useState(0)
-  const TOTAL = Math.max(0, (new Date(deadline).getTime() - Date.now()) / 1000)
+  const TOTAL = Math.max(0, (new Date(deadline).getTime() - (Date.now() + clockOffsetMs)) / 1000)
   const totalRef = useRef(TOTAL)
   // หาก notification มาถึงช้าจนเหลือเวลาน้อยกว่า threshold → ข้าม typing phase
   const tooLate = TOTAL < MIN_USABLE_SECS
@@ -163,7 +190,7 @@ export function HeistVictimModal({ heistId, snippet, attackerName, deadline, onD
   useEffect(() => {
     inputRef.current?.focus()
     const tick = setInterval(() => {
-      const remaining = Math.max(0, (new Date(deadline).getTime() - Date.now()) / 1000)
+      const remaining = Math.max(0, (new Date(deadline).getTime() - (Date.now() + clockOffsetMs)) / 1000)
       setSecsLeft(remaining)
       if (remaining <= 0) {
         clearInterval(tick)
@@ -185,10 +212,10 @@ export function HeistVictimModal({ heistId, snippet, attackerName, deadline, onD
     }
     resolvedRef.current = true
     setPhase('submitting')
-    const result = await defendHeist(heistId, typed)
-    if (result.success && result.defended) {
-      setPhase('defended')
-    } else {
+    try {
+      const result = await defendHeist(heistId, typed)
+      setPhase(result.success && result.defended ? 'defended' : 'failed')
+    } catch {
       setPhase('failed')
     }
   }

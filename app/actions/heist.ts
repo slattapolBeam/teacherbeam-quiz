@@ -23,7 +23,7 @@ function isTrivial(s: string): boolean {
 // INITIATE — attacker bets 1 token, pick victim + snippet, broadcast attack
 // ─────────────────────────────────────────────
 export type InitiateResult =
-  | { success: true; heistId: number; snippet: string; victimName: string; heistWindowSecs: number; deadline: string }
+  | { success: true; heistId: number; snippet: string; victimName: string; heistWindowSecs: number; deadline: string; serverNow: string }
   | { success: false; error: string }
 
 export async function initiateHeist(): Promise<InitiateResult> {
@@ -158,6 +158,7 @@ export async function initiateHeist(): Promise<InitiateResult> {
         snippet,
         attacker_name: session.full_name,
         deadline,
+        server_now: new Date().toISOString(),
       },
     })
   } catch {
@@ -175,6 +176,7 @@ export async function initiateHeist(): Promise<InitiateResult> {
     victimName: `${victim.first_name} ${victim.last_name}`,
     heistWindowSecs: session.heist_window_seconds ?? 10,
     deadline,
+    serverNow: new Date().toISOString(),
   }
 }
 
@@ -182,7 +184,7 @@ export async function initiateHeist(): Promise<InitiateResult> {
 // RESOLVE (attacker side) — called after the heist window elapses
 // ─────────────────────────────────────────────
 export type ResolveResult =
-  | { success: true; outcome: 'success' | 'already_resolved'; tokensGained: number }
+  | { success: true; outcome: 'success' | 'already_resolved' | 'too_early'; tokensGained: number }
   | { success: false; error: string }
 
 export async function resolveHeistAttacker(heistId: number): Promise<ResolveResult> {
@@ -200,8 +202,12 @@ export async function resolveHeistAttacker(heistId: number): Promise<ResolveResu
   if (error) return { success: false, error: error.message }
 
   const row = Array.isArray(data) ? data[0] : data
-  // Either already defended, or called too early
   if (!row || row.outcome !== 'success') {
+    // still pending = the window has not elapsed on the server yet (client clock ahead) → caller retries
+    const { data: still } = await supabase
+      .from('token_heist_log').select('outcome')
+      .eq('id', heistId).eq('attacker_id', session.student_id).maybeSingle()
+    if (still?.outcome === 'pending') return { success: true, outcome: 'too_early', tokensGained: 0 }
     return { success: true, outcome: 'already_resolved', tokensGained: 0 }
   }
   const gained: number = row.tokens_gained
@@ -264,6 +270,7 @@ export type PendingHeistInfo = {
   snippet: string
   attackerName: string
   deadline: string
+  serverNow: string
 } | null
 
 export async function getPendingHeistForVictim(): Promise<PendingHeistInfo> {
@@ -295,5 +302,6 @@ export async function getPendingHeistForVictim(): Promise<PendingHeistInfo> {
     snippet: row.snippet,
     attackerName: attacker ? `${attacker.first_name} ${attacker.last_name}` : 'ผู้โจมตี',
     deadline: new Date(new Date(row.created_at).getTime() + windowMs).toISOString(),
+    serverNow: new Date().toISOString(),
   }
 }
