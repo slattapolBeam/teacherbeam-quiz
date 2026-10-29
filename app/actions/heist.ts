@@ -8,9 +8,20 @@ const TOLERANCE_MS = 500      // server-side grace for victim defense
 const COOLDOWN_MS = 30_000
 const MAX_PER_SESSION = 5
 const MIN_LEN = 4
+const MAX_LEN = 40
 const MAX_TOKENS = 3
 
+// ต้องพิมพ์ในช่อง input บรรทัดเดียวได้ และมองเห็นครบทุกตัวอักษรใน UI
+function isUntypeable(s: string): boolean {
+  if (s.length > MAX_LEN) return true
+  if (s !== s.trim()) return true                 // ช่องว่างหัว/ท้าย มองไม่เห็นใน UI
+  if (/\s{2,}/.test(s)) return true               // ช่องว่างซ้อน HTML จะยุบเหลือตัวเดียว
+  if (/\p{C}/u.test(s)) return true               // control / newline / tab / invisible chars
+  return false
+}
+
 function isTrivial(s: string): boolean {
+  if (isUntypeable(s)) return true
   if (s.length < MIN_LEN) return true
   // pure operators / punctuation only
   if (/^[+\-*\/=!<>&|^~?:;,.\s"'`()[\]{}\\]+$/.test(s)) return true
