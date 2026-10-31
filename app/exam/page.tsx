@@ -7,6 +7,7 @@ import { submitExam, useSuperToken, useHint, getExamQuestionForStudent, getRevie
 import { getExamSession, clearExamSession } from '@/app/actions/session'
 import { initiateHeist, getPendingHeistForVictim } from '@/app/actions/heist'
 import { HeistAttackerModal, HeistVictimModal } from '@/components/exam/HeistModal'
+import { HINT_ENABLED } from '@/lib/features'
 import type { ActiveExamSession, ExamSet, ExamFile } from '@/types/exam'
 
 const DRAFT_SAVE_INTERVAL_MS = 30 * 1000
@@ -135,8 +136,8 @@ export default function ExamPage() {
     return html
       .replace(
         /<button class="hint-btn" onclick="useHint\((\d+)\)">💡<\/button>/g,
-        `<button class="hint-btn" onclick="window.__useHint($1)" title="ดูคำใบ้ (จำกัด 3 ครั้ง)">💡</button>
-         <button class="hint-btn super-btn" onclick="window.__useSuperToken($1)" title="ใช้ Super Token เติมคำตอบ"><img src="/gamecoin.png" style="width:18px;height:18px;display:inline;vertical-align:middle;" alt="coin" /></button>`
+        `${HINT_ENABLED ? `<button class="hint-btn" onclick="window.__useHint($1)" title="ดูคำใบ้ (จำกัด 3 ครั้ง)">💡</button>
+         ` : ''}<button class="hint-btn super-btn" onclick="window.__useSuperToken($1)" title="ใช้ Super Token เติมคำตอบ"><img src="/gamecoin.png" style="width:18px;height:18px;display:inline;vertical-align:middle;" alt="coin" /></button>`
       )
       .replace(
         /<button class="hint-btn" onclick="useSuperToken\((\d+)\)">🌟<\/button>/g,
@@ -702,7 +703,7 @@ export default function ExamPage() {
             {/* Content — scrollable */}
             <div className="p-6 space-y-4 overflow-y-auto">
               {/* Hint */}
-              <div className="flex gap-4 items-start bg-blue-50 rounded-2xl p-4 border border-blue-100">
+              {HINT_ENABLED && <div className="flex gap-4 items-start bg-blue-50 rounded-2xl p-4 border border-blue-100">
                 <div className="text-2xl shrink-0 mt-0.5">💡</div>
                 <div>
                   <p className="font-semibold text-gray-900 mb-1">คำใบ้ปกติ (3 ครั้ง/ชุด)</p>
@@ -710,7 +711,7 @@ export default function ExamPage() {
                     กดปุ่ม 💡 ข้างช่องเติมคำ ระบบจะ<span className="font-medium text-blue-700">เติม 2 ตัวอักษรแรก</span>ของคำตอบให้เป็นคำใบ้ ใช้ได้สูงสุด 3 ครั้งต่อชุดข้อสอบ
                   </p>
                 </div>
-              </div>
+              </div>}
 
               {/* Super Token */}
               <div className="flex gap-4 items-start bg-yellow-50 rounded-2xl p-4 border border-yellow-100">

@@ -1,5 +1,6 @@
 'use server'
 
+import { HINT_ENABLED } from '@/lib/features'
 import { createServiceClient } from '@/lib/supabase/server'
 import { getExamSession, setSessionCookie } from '@/app/actions/session'
 import { logActivity } from '@/lib/auditLog'
@@ -213,6 +214,8 @@ export async function useHint(setName: string, questionIndex: number): Promise<U
   if (!session || session.mode !== 'exam') {
     return { success: false, error: 'session หมดอายุหรือไม่ถูกต้อง กรุณาเข้าสู่ระบบใหม่' }
   }
+
+  if (!HINT_ENABLED) return { success: false, error: 'ระบบคำใบ้ถูกปิดชั่วคราว' }
 
   const hintsUsed = session.hints_used || 0
   if (hintsUsed >= 3) return { success: false, error: 'คุณใช้สิทธิ์คำใบ้ปกติครบ 3 ครั้งแล้วครับ' }
