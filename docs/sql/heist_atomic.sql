@@ -3,6 +3,15 @@
 -- All balance changes happen as single UPDATE statements (col = col ± n),
 -- so concurrent heists/defends/gacha can no longer overwrite each other.
 
+-- Hard cap: no code path (teacher give, gacha, heist) can ever store a balance outside 0..3.
+UPDATE students SET super_tokens = 3 WHERE super_tokens > 3;
+UPDATE students SET super_tokens = 0 WHERE super_tokens IS NULL OR super_tokens < 0;
+ALTER TABLE students DROP CONSTRAINT IF EXISTS students_super_tokens_range;
+ALTER TABLE students ADD CONSTRAINT students_super_tokens_range CHECK (super_tokens BETWEEN 0 AND 3);
+
+-- Replacing the 4-arg signature with a 5-arg one (default p_floor) — drop the old one first.
+DROP FUNCTION IF EXISTS resolve_heist_success(bigint, text, int, int);
+
 -- Add tokens to a student, capped. Returns the new balance (NULL if no such student).
 CREATE OR REPLACE FUNCTION grant_super_tokens(p_student_id text, p_amount int, p_max int)
 RETURNS int
@@ -15,10 +24,10 @@ AS $$
 $$;
 
 -- Attacker side: claim a pending heist whose window has elapsed, steal 1 from the
--- victim (only if they still have ≥1), refund the stake and pay the attacker — one transaction.
+-- victim (only if they keep ≥ p_floor afterwards), refund the stake and pay the attacker — one transaction.
 -- outcome: 'success' | 'already_resolved' (defended, unknown, or called too early)
 CREATE OR REPLACE FUNCTION resolve_heist_success(
-  p_heist_id bigint, p_attacker_id text, p_window_ms int, p_max int
+  p_heist_id bigint, p_attacker_id text, p_window_ms int, p_max int, p_floor int DEFAULT 1
 )
 RETURNS TABLE (outcome text, tokens_gained int)
 LANGUAGE plpgsql
@@ -43,7 +52,7 @@ BEGIN
 
   UPDATE students
      SET super_tokens = super_tokens - 1
-   WHERE student_id = v_victim AND super_tokens >= 1;
+   WHERE student_id = v_victim AND super_tokens > p_floor;
   IF FOUND THEN v_stolen := 1; END IF;
 
   UPDATE students

@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { submitExam, useSuperToken, useHint, getExamQuestionForStudent, getReviewData } from '@/app/actions/exam'
 import { getExamSession, clearExamSession } from '@/app/actions/session'
-import { initiateHeist, getPendingHeistForVictim } from '@/app/actions/heist'
+import { initiateHeist, getPendingHeistForVictim, getMyTokens } from '@/app/actions/heist'
 import { HeistAttackerModal, HeistVictimModal } from '@/components/exam/HeistModal'
 import { HINT_ENABLED } from '@/lib/features'
 import type { ActiveExamSession, ExamSet, ExamFile } from '@/types/exam'
@@ -407,6 +407,8 @@ export default function ExamPage() {
   // server time − client time ที่ ณ ตอนรับข้อมูล ใช้ชดเชยนาฬิกาเครื่องนักเรียนที่เพี้ยน
   const clockOffset = (serverNow: string) => new Date(serverNow).getTime() - Date.now()
 
+  function refreshTokens() { getMyTokens().then(t => { if (t !== null) setSuperTokens(t) }).catch(() => {}) }
+
   function blockClipboard(e: React.SyntheticEvent) { e.preventDefault() }
 
   // ── Fallback poll: จับ heist ที่ broadcast พลาด (ทุก 2 วิ) ────────────
@@ -414,6 +416,8 @@ export default function ExamPage() {
     if (!session || session.mode !== 'exam' || showSuccessModal) return
     let tick = 0
     const poll = setInterval(async () => {
+      // ยอดเหรียญ: realtime ของ Supabase อาจไม่ส่ง (RLS/ไม่ได้เปิด publication) จึง sync ยอดจริงจาก server ทุกรอบ
+      getMyTokens().then(t => { if (t !== null) setSuperTokens(t) }).catch(() => {})
       if (heistIncomingRef.current) return
       // ทุก 3 รอบ (~6 วิ) แนบ heartbeat ไปด้วย เพื่อให้ผู้ปล้นรู้ว่าเราอยู่หน้าสอบ
       const pending = await getPendingHeistForVictim(tick++ % 3 === 0)
@@ -479,6 +483,7 @@ export default function ExamPage() {
         setHeistErrorMsg(result.error)
         return
       }
+      refreshTokens() // หักเหรียญเดิมพันแล้ว แสดงทันที
       setHeistAttacking({ heistId: result.heistId, snippet: result.snippet, victimName: result.victimName, heistWindowSecs: result.heistWindowSecs, deadline: result.deadline, clockOffsetMs: clockOffset(result.serverNow) })
     } finally {
       heistLoadingRef.current = false
@@ -942,7 +947,7 @@ export default function ExamPage() {
           heistWindowSecs={heistAttacking.heistWindowSecs}
           deadline={heistAttacking.deadline}
           clockOffsetMs={heistAttacking.clockOffsetMs}
-          onDone={() => setHeistAttacking(null)}
+          onDone={() => { setHeistAttacking(null); refreshTokens() }}
         />
       )}
 
@@ -955,7 +960,7 @@ export default function ExamPage() {
           attackerName={heistIncoming.attackerName}
           deadline={heistIncoming.deadline}
           clockOffsetMs={heistIncoming.clockOffsetMs}
-          onDone={() => setHeistIncoming(null)}
+          onDone={() => { setHeistIncoming(null); refreshTokens() }}
         />
       )}
 

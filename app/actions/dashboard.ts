@@ -74,12 +74,13 @@ export async function giveTokenToStudent(studentId: string): Promise<ActionResul
     const { data: st, error: fetchErr } = await supabase.from('students')
       .select('super_tokens').eq('student_id', studentId).single()
     if (fetchErr) throw fetchErr
-    let tokens = st ? (st.super_tokens || 0) : 0
-    if (tokens >= 3) return { success: true, tokens }
+    const before = st ? (st.super_tokens || 0) : 0
+    if (before >= 3) return { success: true, tokens: before }
 
-    tokens += 1 // ให้ทีละ 1 เหรียญ (ตันที่ 3)
-    const { error: updateErr } = await supabase.from('students')
-      .update({ super_tokens: tokens }).eq('student_id', studentId)
+    // ให้ทีละ 1 เหรียญ (ตันที่ 3) — บวกใน DB แบบ atomic กันแข่งกับ heist/gacha
+    const { data: tokens, error: updateErr } = await supabase.rpc('grant_super_tokens', {
+      p_student_id: studentId, p_amount: 1, p_max: 3,
+    })
     if (updateErr) throw updateErr
 
     await logActivity({ type: 'teacher', id: teacher.email }, 'give_token', studentId, { tokens })
@@ -155,11 +156,10 @@ export async function distributeSuperTokens(
     const selectedIds: string[] = []
 
     for (const student of selected) {
-      let tokens = student.super_tokens || 0
-      if (tokens < 3) {
-        tokens += 1
-        const { error: updateErr } = await supabase.from('students')
-          .update({ super_tokens: tokens }).eq('student_id', student.student_id)
+      if ((student.super_tokens || 0) < 3) {
+        const { error: updateErr } = await supabase.rpc('grant_super_tokens', {
+          p_student_id: student.student_id, p_amount: 1, p_max: 3,
+        })
         if (!updateErr) {
           successCount++
           selectedIds.push(student.student_id)

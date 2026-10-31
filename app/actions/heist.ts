@@ -11,6 +11,8 @@ const MIN_LEN = 4
 const MAX_LEN = 40
 const ACTIVE_MS = 20_000      // victim ต้องมี heartbeat ภายในช่วงนี้ (client ส่งทุก ~6 วิ)
 const MAX_TOKENS = 3
+const VICTIM_COOLDOWN_MS = 60_000  // เหยื่อที่เพิ่งถูกปล้น (หรือกำลังถูกปล้น) พักจากการเป็นเป้าหมาย
+const VICTIM_FLOOR = 1        // เหยื่อต้องเหลือเหรียญอย่างน้อยเท่านี้ — ปล้นได้เฉพาะคนที่มี > FLOOR
 
 // ต้องพิมพ์ในช่อง input บรรทัดเดียวได้ และมองเห็นครบทุกตัวอักษรใน UI
 function isUntypeable(s: string): boolean {
@@ -75,9 +77,9 @@ export async function initiateHeist(): Promise<InitiateResult> {
   const { data: candidates } = await supabase
     .from('students')
     .select('student_id, first_name, last_name, class_number, super_tokens')
-    .eq('room', room).neq('student_id', student_id).gte('super_tokens', 1)
+    .eq('room', room).neq('student_id', student_id).gte('super_tokens', VICTIM_FLOOR + 1)
   if (!candidates?.length)
-    return { success: false, error: 'ไม่มีเป้าหมายที่มีเหรียญในห้องนี้' }
+    return { success: false, error: 'ไม่มีเป้าหมายที่มีเหรียญเหลือพอให้ปล้นในห้องนี้ (เหยื่อต้องมี ≥2 เหรียญ)' }
 
   const { data: submitted } = await supabase
     .from('exam_results').select('student_id').eq('project_name', project_name)
@@ -95,6 +97,13 @@ export async function initiateHeist(): Promise<InitiateResult> {
     .eq('project_name', project_name).eq('outcome', 'pending')
     .gte('created_at', new Date(Date.now() - heistWindowMs - TOLERANCE_MS).toISOString())
   const underAttackSet = new Set((underAttack ?? []).map((r: any) => r.victim_id as string))
+
+  // victims ที่เพิ่งถูกปล้นสำเร็จ — ให้พัก VICTIM_COOLDOWN_MS ก่อนเป็นเป้าหมายอีก (กันโดนรุมจนหมดตัว)
+  const { data: recentlyRobbed } = await supabase
+    .from('token_heist_log').select('victim_id')
+    .eq('project_name', project_name).eq('outcome', 'success')
+    .gte('resolved_at', new Date(Date.now() - VICTIM_COOLDOWN_MS).toISOString())
+  for (const r of recentlyRobbed ?? []) underAttackSet.add((r as any).victim_id as string)
 
   // เฉพาะ นศ. ที่เข้าสอบจริงด้วย PIN นี้ (มี exam_session_start ใน activity_logs)
   let participantSet: Set<string> | null = null
@@ -125,7 +134,7 @@ export async function initiateHeist(): Promise<InitiateResult> {
     (participantSet === null || participantSet.has(c.student_id))
   )
   if (!valid.length)
-    return { success: false, error: 'ไม่มีเป้าหมายที่ถูกต้องในขณะนี้ (ส่งข้อสอบแล้ว, ออฟไลน์, ถูกปล้นไปแล้ว หรือกำลังถูกคนอื่นปล้นอยู่)' }
+    return { success: false, error: 'ไม่มีเป้าหมายที่ถูกต้องในขณะนี้ (ส่งข้อสอบแล้ว, ออฟไลน์, ถูกปล้นไปแล้ว กำลังถูกคนอื่นปล้นอยู่ หรือเพิ่งถูกปล้นไปไม่นาน)' }
 
   const victim = valid[Math.floor(Math.random() * valid.length)]
 
@@ -174,6 +183,19 @@ export async function initiateHeist(): Promise<InitiateResult> {
   if (heistErr || !heistRow) {
     await supabase.rpc('grant_super_tokens', { p_student_id: student_id, p_amount: 1, p_max: MAX_TOKENS })
     return { success: false, error: `บันทึกการปล้นไม่สำเร็จ: ${heistErr?.message ?? 'ไม่มีข้อมูลแถว'}` }
+  }
+
+  // 8b. กันสองคนเลือกเหยื่อคนเดียวกันพร้อมกัน (การเช็ก underAttackSet ข้างบนไม่ atomic)
+  //     ถ้ามี heist pending ของเหยื่อคนนี้ที่ id น้อยกว่า = เขามาก่อน เราถอนตัว คืนเหรียญ
+  const { count: earlier } = await supabase
+    .from('token_heist_log').select('id', { count: 'exact', head: true })
+    .eq('victim_id', victim.student_id).eq('project_name', project_name).eq('outcome', 'pending')
+    .lt('id', heistRow.id)
+    .gte('created_at', new Date(Date.now() - heistWindowMs - TOLERANCE_MS).toISOString())
+  if ((earlier ?? 0) > 0) {
+    await supabase.from('token_heist_log').delete().eq('id', heistRow.id)
+    await supabase.rpc('grant_super_tokens', { p_student_id: student_id, p_amount: 1, p_max: MAX_TOKENS })
+    return { success: false, error: 'เป้าหมายถูกคนอื่นปล้นพร้อมกันพอดี ลองกดปล้นอีกครั้ง (คืนเหรียญให้แล้ว)' }
   }
 
   // 9. Broadcast to victim via HTTP (no subscribe — avoids WebSocket race in server actions)
@@ -226,7 +248,7 @@ export async function resolveHeistAttacker(heistId: number): Promise<ResolveResu
   // claim + steal + payout run in one DB transaction (docs/sql/heist_atomic.sql)
   const { data, error } = await supabase.rpc('resolve_heist_success', {
     p_heist_id: heistId, p_attacker_id: session.student_id,
-    p_window_ms: heistWindowMs, p_max: MAX_TOKENS,
+    p_window_ms: heistWindowMs, p_max: MAX_TOKENS, p_floor: VICTIM_FLOOR,
   })
   if (error) return { success: false, error: error.message }
 
@@ -340,4 +362,16 @@ export async function getPendingHeistForVictim(touchPresence = false): Promise<P
     deadline: new Date(new Date(row.created_at).getTime() + windowMs).toISOString(),
     serverNow: new Date().toISOString(),
   }
+}
+
+// ─────────────────────────────────────────────
+// BALANCE — client polls so the coin counter follows heists/gacha without relying on postgres_changes
+// ─────────────────────────────────────────────
+export async function getMyTokens(): Promise<number | null> {
+  const session = await getExamSession()
+  if (!session) return null
+  const supabase = createServiceClient()
+  const { data } = await supabase
+    .from('students').select('super_tokens').eq('student_id', session.student_id).maybeSingle()
+  return data ? Math.min(data.super_tokens || 0, MAX_TOKENS) : null
 }

@@ -195,9 +195,11 @@ export async function useSuperToken(setName: string, questionIndex: number): Pro
   const answer = (row.answers as string[])?.[questionIndex] || ''
 
   const newTokens = tokens - 1
-  const { error: updateErr } = await supabase.from('students')
-    .update({ super_tokens: newTokens }).eq('student_id', session.student_id)
+  const { data: deducted, error: updateErr } = await supabase.from('students')
+    .update({ super_tokens: newTokens }).eq('student_id', session.student_id).eq('super_tokens', tokens)
+    .select('super_tokens').maybeSingle()
   if (updateErr) return { success: false, error: updateErr.message }
+  if (!deducted) return { success: false, error: 'ยอดเหรียญเปลี่ยนแปลงระหว่างดำเนินการ ลองอีกครั้ง' }
 
   await logActivity({ type: 'student', id: session.student_id }, 'super_token_used', setName, { questionIndex })
 
