@@ -147,7 +147,6 @@ export default function ExamPage() {
 
   // ── Init ────────────────────────────────────────────────
   useEffect(() => {
-    let tokenChannel: ReturnType<typeof supabase.channel> | null = null
     let gachaChannel: ReturnType<typeof supabase.channel> | null = null
     let forceSubmitChannel: ReturnType<typeof supabase.channel> | null = null
     let heistChannel: ReturnType<typeof supabase.channel> | null = null
@@ -178,7 +177,6 @@ export default function ExamPage() {
           ? Math.floor((Date.now() - new Date(activeSession.session_started_at).getTime()) / 1000)
           : 0
         startTimer(Math.max(10, totalSec - elapsedSec))
-        tokenChannel = listenForSuperTokens(activeSession)
         gachaChannel = listenForGachaDrops(activeSession)
         forceSubmitChannel = listenForForceSubmit(activeSession)
         heistChannel = listenForHeistAttacks(activeSession)
@@ -191,7 +189,6 @@ export default function ExamPage() {
       cancelled = true
       document.removeEventListener('visibilitychange', handleVisibility)
       if (timerRef.current) clearInterval(timerRef.current)
-      if (tokenChannel) supabase.removeChannel(tokenChannel)
       if (gachaChannel) supabase.removeChannel(gachaChannel)
       if (forceSubmitChannel) supabase.removeChannel(forceSubmitChannel)
       if (heistChannel) supabase.removeChannel(heistChannel)
@@ -427,16 +424,6 @@ export default function ExamPage() {
   }, [session, showSuccessModal])
 
   // ── Realtime ─────────────────────────────────────────────
-  function listenForSuperTokens(activeSession: ActiveExamSession) {
-    return supabase.channel('student-token-updates')
-      .on('postgres_changes', {
-        event: 'UPDATE', schema: 'public', table: 'students',
-        filter: `student_id=eq.${activeSession.student_id}`
-      }, (payload: any) => {
-        setSuperTokens(payload.new.super_tokens || 0)
-      }).subscribe()
-  }
-
   function listenForGachaDrops(activeSession: ActiveExamSession) {
     return supabase.channel('gacha-broadcast')
       .on('broadcast', { event: 'gacha_drop' }, (msg: any) => {

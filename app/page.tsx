@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
 import { startExamSession, startReviewSession } from '@/app/actions/session'
+import { lookupStudent, loadSubjectsForStudent, checkTokenCount } from '@/app/actions/student'
 import { signInTeacher } from '@/app/actions/auth'
 
 type Role = 'student' | 'teacher'
@@ -18,8 +18,6 @@ type Subject = {
 
 export default function LoginPage() {
   const router = useRouter()
-  const supabase = createClient()
-
   const [role, setRole] = useState<Role>('student')
   const [step, setStep] = useState<StudentStep>('id')
 
@@ -47,7 +45,7 @@ export default function LoginPage() {
   // Token check modal (unchanged feature from baseline)
   const [showTokenModal, setShowTokenModal] = useState(false)
   const [checkId, setCheckId] = useState('')
-  const [tokenResult, setTokenResult] = useState<string | null>(null)
+  const [tokenResult, setTokenResult] = useState<{ firstName: string; tokens: number } | { error: string } | null>(null)
   const [isFetchingToken, setIsFetchingToken] = useState(false)
 
   const idInputRef = useRef<HTMLInputElement>(null)
@@ -70,10 +68,9 @@ export default function LoginPage() {
     }
     setIsCheckingId(true)
     try {
-      const { data, error } = await supabase.from('students')
-        .select('*').eq('student_id', studentIdInput).single()
-      if (error || !data) throw new Error('ไม่พบรหัสนักศึกษานี้ในระบบ')
-      setStudentData(data)
+      const result = await lookupStudent(studentIdInput)
+      if (!result.success) throw new Error(result.error)
+      setStudentData(result.student)
       setStep('subject')
       loadSubjects(studentIdInput)
     } catch (err: any) {
@@ -88,29 +85,10 @@ export default function LoginPage() {
     setIsLoadingSubjects(true)
     setSubjectMessage(null)
     try {
-      const { data: subjectsData, error: subjectsErr } = await supabase
-        .from('subjects').select('id, name, description').eq('is_active', true).order('name')
-      if (subjectsErr) throw subjectsErr
-
-      const list = subjectsData || []
-      setSubjects(list)
-      if (list.length === 0) return
-
-      const [{ data: activeSessions }, { data: resultsData }] = await Promise.all([
-        supabase.from('exam_sessions').select('project_name').eq('is_active', true),
-        supabase.from('exam_results').select('project_name').eq('student_id', studentId),
-      ])
-
-      const activeNames = new Set((activeSessions || []).map((s: any) => s.project_name))
-      const resultNames = new Set((resultsData || []).map((r: any) => r.project_name))
-
-      const status: Record<string, SubjectStatus> = {}
-      list.forEach((s: Subject) => {
-        if (activeNames.has(s.name)) status[s.name] = 'active'
-        else if (resultNames.has(s.name)) status[s.name] = 'closed-review'
-        else status[s.name] = 'not-open'
-      })
-      setSubjectStatus(status)
+      const result = await loadSubjectsForStudent(studentId)
+      if (!result.success) throw new Error(result.error)
+      setSubjects(result.subjects)
+      setSubjectStatus(result.status)
     } catch (err: any) {
       setSubjectMessage({ text: 'โหลดรายวิชาไม่สำเร็จ: ' + err.message, tone: 'warning' })
     } finally {
@@ -197,15 +175,10 @@ export default function LoginPage() {
     if (!checkId) return
     setIsFetchingToken(true)
     try {
-      const { data } = await supabase
-        .from('students').select('super_tokens, first_name').eq('student_id', checkId).single()
-      if (data) {
-        setTokenResult(`สวัสดี ${data.first_name}!<br/>คุณมี Super Token: <span class="text-3xl text-yellow-500">${data.super_tokens || 0}</span> เหรียญ`)
-      } else {
-        setTokenResult('<span class="text-red-500">ไม่พบข้อมูลนักศึกษา</span>')
-      }
+      const result = await checkTokenCount(checkId)
+      setTokenResult(result.success ? { firstName: result.firstName, tokens: result.tokens } : { error: result.error })
     } catch {
-      setTokenResult('<span class="text-red-500">เกิดข้อผิดพลาด</span>')
+      setTokenResult({ error: 'เกิดข้อผิดพลาด' })
     }
     setIsFetchingToken(false)
   }
@@ -456,10 +429,16 @@ export default function LoginPage() {
               {isFetchingToken ? 'กำลังค้นหา...' : 'ตรวจสอบ'}
             </button>
             {tokenResult && (
-              <p
-                className="text-lg font-bold text-gray-800 my-4"
-                dangerouslySetInnerHTML={{ __html: tokenResult }}
-              />
+              <p className="text-lg font-bold text-gray-800 my-4">
+                {'error' in tokenResult ? (
+                  <span className="text-red-500">{tokenResult.error}</span>
+                ) : (
+                  <>
+                    สวัสดี {tokenResult.firstName}!<br />
+                    คุณมี Super Token: <span className="text-3xl text-yellow-500">{tokenResult.tokens}</span> เหรียญ
+                  </>
+                )}
+              </p>
             )}
             <button onClick={closeTokenModal} className="text-sm text-gray-500 hover:text-gray-800 underline">
               ปิดหน้าต่าง

@@ -14,6 +14,9 @@ import {
   deleteStudent as deleteStudentAction,
   deleteRoom as deleteRoomAction,
   getHeistLog as getHeistLogAction,
+  getExamResultsTable,
+  getActivePin,
+  getStudentTokens,
   type ImportStudentRow,
   type HeistLogRow,
 } from '@/app/actions/dashboard'
@@ -142,29 +145,22 @@ export default function DashboardPage() {
   }, [])
 
   // ── Fetch results ──────────────────────────────────────
-  async function fetchExamResults(project: string) {
-    setIsLoadingTable(true)
+  async function fetchExamResults(project: string, silent = false) {
+    if (!silent) setIsLoadingTable(true)
     setTableError('')
     try {
-      const { data: students, error: studentError } = await supabase.from('students').select('*')
-      if (studentError) throw new Error(`ไม่สามารถดึงข้อมูลตาราง students ได้: ${studentError.message}`)
+      const res = await getExamResultsTable(project)
+      if (!res.success) throw new Error(res.error)
 
-      const { data: results, error: resultError } = await supabase.from('exam_results')
-        .select('*').eq('project_name', project)
-      if (resultError) throw new Error(`ไม่สามารถดึงข้อมูลตาราง exam_results ได้: ${resultError.message}`)
-
-      const mapped: ExamRow[] = (students || []).map((student: any) => {
-        const result = (results || []).find((r: any) => r.student_id === student.student_id)
-        return {
-          room: student.room || 'ไม่ระบุ',
-          class_number: student.class_number || 0,
-          student_id: student.student_id,
-          full_name: `${student.first_name} ${student.last_name}`,
-          has_submitted: !!result,
-          score: result ? result.score : null,
-          timestamp: result?.created_at ? new Date(result.created_at).toLocaleString('th-TH') : '-',
-        }
-      })
+      const mapped: ExamRow[] = res.rows.map(r => ({
+        room: r.room,
+        class_number: r.class_number,
+        student_id: r.student_id,
+        full_name: r.full_name,
+        has_submitted: r.has_submitted,
+        score: r.score,
+        timestamp: r.created_at ? new Date(r.created_at).toLocaleString('th-TH') : '-',
+      }))
 
       setGlobalExamData(mapped)
 
@@ -173,20 +169,20 @@ export default function DashboardPage() {
     } catch (err: any) {
       setTableError(err.message)
     } finally {
-      setIsLoadingTable(false)
+      if (!silent) setIsLoadingTable(false)
     }
   }
 
   async function checkSessionStatus(project: string) {
     try {
-      const { data } = await supabase.from('exam_sessions')
-        .select('pin_code').eq('project_name', project).eq('is_active', true)
-        .order('created_at', { ascending: false }).limit(1).maybeSingle()
-      if (data) {
+      const res = await getActivePin(project)
+      if (!res.success) throw new Error(res.error)
+      const pin = res.pin
+      if (pin) {
         setPinActive(true)
-        setCurrentPin(data.pin_code)
+        setCurrentPin(pin)
         try {
-          const stored = sessionStorage.getItem(`exam-end-time:${project}:${data.pin_code}`)
+          const stored = sessionStorage.getItem(`exam-end-time:${project}:${pin}`)
           if (stored) {
             const endTimeMs = parseInt(stored, 10)
             if (endTimeMs > Date.now()) startExamTimer(endTimeMs)
@@ -233,14 +229,11 @@ export default function DashboardPage() {
     }
   }, [gachaWinnersKey])
 
-  // ── Realtime: refresh table on new submissions ─────────
+  // ── Live refresh: poll ผลสอบทุก 5 วิ (เดิมใช้ postgres_changes ซึ่งต้องเปิด anon SELECT) ──
   useEffect(() => {
-    if (!realtimeOn) return
-    const channel = supabase.channel('schema-db-changes')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'exam_results' }, () => {
-        fetchExamResults(projectFilter)
-      }).subscribe()
-    return () => { supabase.removeChannel(channel) }
+    if (!realtimeOn || !projectFilter) return
+    const id = setInterval(() => { fetchExamResults(projectFilter, true) }, 5000)
+    return () => clearInterval(id)
   }, [realtimeOn, projectFilter])
 
   // ── PIN management ──────────────────────────────────────
@@ -396,11 +389,9 @@ export default function DashboardPage() {
     ;(async () => {
       try {
         // ดึงจำนวนเหรียญปัจจุบันของทุกคนในห้องนี้แบบ batch ครั้งเดียว (ข้อมูลสดจาก DB เสมอ)
-        const { data: tokenData, error } = await supabase.from('students')
-          .select('student_id, super_tokens').in('student_id', students.map(s => s.student_id))
-        if (error) throw error
-        const tokenMap: Record<string, number> = {}
-        tokenData?.forEach((t: any) => { tokenMap[t.student_id] = t.super_tokens || 0 })
+        const res = await getStudentTokens(students.map(s => s.student_id))
+        if (!res.success) throw new Error(res.error)
+        const tokenMap = res.tokens
         setGiveTokenList(students.map(s => ({ ...s, tokens: tokenMap[s.student_id] || 0 })))
       } catch (err: any) {
         setGiveTokenListError('โหลดข้อมูลเหรียญไม่สำเร็จ: ' + err.message)

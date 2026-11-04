@@ -315,3 +315,74 @@ export async function deleteRoom(room: string): Promise<ActionResult<{ count: nu
     return { success: false, error: err.message }
   }
 }
+// ── อ่านข้อมูลสำหรับหน้า dashboard ─────────────────────────
+// เดิมหน้า dashboard อ่าน students/exam_results/exam_sessions ผ่าน anon key ตรง ๆ
+// ย้ายมาเป็น Server Action (เช็ก requireTeacher) เพราะถอด anon SELECT ออกแล้ว (docs/sql/lock_down_anon.sql)
+export type ExamResultsRow = {
+  room: string
+  class_number: number
+  student_id: string
+  full_name: string
+  has_submitted: boolean
+  score: number | null
+  created_at: string | null
+}
+
+export async function getExamResultsTable(projectName: string): Promise<ActionResult<{ rows: ExamResultsRow[] }>> {
+  const supabase = createServiceClient()
+  try {
+    await requireTeacher()
+    const { data: students, error: studentError } = await supabase.from('students').select('*')
+    if (studentError) throw new Error(`ไม่สามารถดึงข้อมูลตาราง students ได้: ${studentError.message}`)
+
+    const { data: results, error: resultError } = await supabase.from('exam_results')
+      .select('student_id, score, created_at').eq('project_name', projectName)
+    if (resultError) throw new Error(`ไม่สามารถดึงข้อมูลตาราง exam_results ได้: ${resultError.message}`)
+
+    const resultByStudent = new Map((results || []).map((r: any) => [r.student_id, r]))
+    const rows: ExamResultsRow[] = (students || []).map((st: any) => {
+      const r = resultByStudent.get(st.student_id)
+      return {
+        room: st.room || 'ไม่ระบุ',
+        class_number: st.class_number || 0,
+        student_id: st.student_id,
+        full_name: `${st.first_name} ${st.last_name}`,
+        has_submitted: !!r,
+        score: r ? r.score : null,
+        created_at: r?.created_at ?? null,
+      }
+    })
+    return { success: true, rows }
+  } catch (err: any) {
+    return { success: false, error: err.message }
+  }
+}
+
+export async function getActivePin(projectName: string): Promise<ActionResult<{ pin: string | null }>> {
+  const supabase = createServiceClient()
+  try {
+    await requireTeacher()
+    const { data, error } = await supabase.from('exam_sessions')
+      .select('pin_code').eq('project_name', projectName).eq('is_active', true)
+      .order('created_at', { ascending: false }).limit(1).maybeSingle()
+    if (error) throw error
+    return { success: true, pin: data?.pin_code ?? null }
+  } catch (err: any) {
+    return { success: false, error: err.message }
+  }
+}
+
+export async function getStudentTokens(studentIds: string[]): Promise<ActionResult<{ tokens: Record<string, number> }>> {
+  const supabase = createServiceClient()
+  try {
+    await requireTeacher()
+    const { data, error } = await supabase.from('students')
+      .select('student_id, super_tokens').in('student_id', studentIds)
+    if (error) throw error
+    const tokens: Record<string, number> = {}
+    data?.forEach((t: any) => { tokens[t.student_id] = t.super_tokens || 0 })
+    return { success: true, tokens }
+  } catch (err: any) {
+    return { success: false, error: err.message }
+  }
+}

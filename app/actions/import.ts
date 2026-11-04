@@ -174,3 +174,20 @@ export async function deleteSubject(subjectName: string): Promise<ActionResult> 
     return { success: false, error: err.message }
   }
 }
+
+// ── นับจำนวนผลสอบที่จะได้รับผลกระทบก่อนลบชุดข้อสอบ/วิชา (setName ว่าง = นับทั้งวิชา) ──
+// เดิมหน้า import นับผ่าน anon key ตรง ๆ ย้ายมาที่นี่เพราะถอด anon SELECT ของ exam_results แล้ว
+export async function countExamResults(projectName: string, setName?: string): Promise<ActionResult<{ count: number }>> {
+  const supabase = createServiceClient()
+  try {
+    await requireTeacher()
+    let q = supabase.from('exam_results')
+      .select('id', { count: 'exact', head: true }).eq('project_name', projectName)
+    if (setName) q = q.eq('exam_set', setName)
+    const { count, error } = await q
+    if (error) throw error
+    return { success: true, count: count ?? 0 }
+  } catch (err: any) {
+    return { success: false, error: err.message }
+  }
+}

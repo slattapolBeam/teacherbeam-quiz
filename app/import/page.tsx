@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { saveExamQuestions, deleteExamQuestionSet, deleteSubject, listExamSets, createSubject, getExamSetPreview, type ExamSetPreviewData } from '@/app/actions/import'
+import { saveExamQuestions, deleteExamQuestionSet, deleteSubject, listExamSets, countExamResults, createSubject, getExamSetPreview, type ExamSetPreviewData } from '@/app/actions/import'
 import { signOutTeacher } from '@/app/actions/auth'
 
 type BlankType = { type: 'dropdown'; choices: string[] } | null
@@ -287,9 +287,8 @@ export default function ImportPage() {
     const key = `${projectName}::${setName}`
     setDeletingKey(key)
     try {
-      const { count } = await supabase.from('exam_results')
-        .select('id', { count: 'exact', head: true })
-        .eq('project_name', projectName).eq('exam_set', setName)
+      const countRes = await countExamResults(projectName, setName)
+      const count = countRes.success ? countRes.count : 0
 
       const warning = count && count > 0
         ? `\n\n⚠️ มีนักศึกษาส่งข้อสอบชุดนี้ไปแล้ว ${count} คน โหมดทบทวนเฉลยของพวกเขาจะใช้งานไม่ได้ทันทีถ้าลบ`
@@ -315,8 +314,8 @@ export default function ImportPage() {
   async function handleDeleteSubject(subjectName: string) {
     setDeletingSubject(subjectName)
     try {
-      const { count } = await supabase.from('exam_results')
-        .select('id', { count: 'exact', head: true }).eq('project_name', subjectName)
+      const countRes = await countExamResults(subjectName)
+      const count = countRes.success ? countRes.count : 0
 
       const setCount = existingSets.filter(s => s.project_name === subjectName).length
       const warning = count && count > 0
