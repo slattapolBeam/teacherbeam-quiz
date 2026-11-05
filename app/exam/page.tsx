@@ -510,6 +510,8 @@ export default function ExamPage() {
   handleSubmitRef.current = handleSubmit
 
   async function logoutAndExit() {
+    // ส่งรหัสนักศึกษาไปให้หน้าแรกข้ามขั้นกรอกรหัส ไปที่หน้าเลือกวิชาเลย
+    try { if (session) sessionStorage.setItem('resume_student_id', session.student_id) } catch {}
     await clearExamSession()
     router.push('/')
   }
@@ -528,7 +530,7 @@ export default function ExamPage() {
             onClick={logoutAndExit}
             className="w-full py-3 bg-gray-900 hover:bg-gray-800 text-white font-medium rounded-2xl transition"
           >
-            กลับสู่หน้าหลัก
+            กลับไปเลือกวิชา
           </button>
         </div>
       </div>
@@ -655,7 +657,7 @@ export default function ExamPage() {
                 onClick={logoutAndExit}
                 className="px-8 py-4 bg-gray-900 hover:bg-gray-800 text-white font-medium text-lg rounded-xl transition duration-200 shadow-lg active:scale-95 flex items-center gap-2"
               >
-                กลับสู่หน้าหลัก
+                กลับไปเลือกวิชา
               </button>
             ) : (
               <button
@@ -965,7 +967,7 @@ export default function ExamPage() {
               onClick={logoutAndExit}
               className="w-full py-3 bg-gray-900 text-white font-medium rounded-xl"
             >
-              กลับสู่หน้าหลัก
+              กลับไปเลือกวิชา
             </button>
           </div>
         </div>

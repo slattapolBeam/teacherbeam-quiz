@@ -27,6 +27,7 @@ export type SubjectsForStudent =
       success: true
       subjects: { id: string; name: string; description: string | null }[]
       status: Record<string, SubjectStatus>
+      tokens: number
     }
   | { success: false; error: string }
 
@@ -39,12 +40,13 @@ export async function loadSubjectsForStudent(studentId: string): Promise<Subject
   if (error) return { success: false, error: error.message }
 
   const list = subjects || []
-  if (list.length === 0) return { success: true, subjects: list, status: {} }
 
-  const [{ data: activeSessions }, { data: results }] = await Promise.all([
+  const [{ data: activeSessions }, { data: results }, { data: student }] = await Promise.all([
     supabase.from('exam_sessions').select('project_name').eq('is_active', true),
     supabase.from('exam_results').select('project_name').eq('student_id', studentId),
+    supabase.from('students').select('super_tokens').eq('student_id', studentId).maybeSingle(),
   ])
+  const tokens = student?.super_tokens || 0
 
   const activeNames = new Set((activeSessions || []).map((s: any) => s.project_name))
   const resultNames = new Set((results || []).map((r: any) => r.project_name))
@@ -55,19 +57,7 @@ export async function loadSubjectsForStudent(studentId: string): Promise<Subject
     else if (resultNames.has(s.name)) status[s.name] = 'closed-review'
     else status[s.name] = 'not-open'
   }
-  return { success: true, subjects: list, status }
-}
-
-export type TokenCountResult =
-  | { success: true; firstName: string; tokens: number }
-  | { success: false; error: string }
-
-export async function checkTokenCount(studentId: string): Promise<TokenCountResult> {
-  if (!/^\d{13}$/.test(studentId)) return { success: false, error: 'ไม่พบข้อมูลนักศึกษา' }
-
-  const supabase = createServiceClient()
-  const { data } = await supabase.from('students')
-    .select('super_tokens, first_name').eq('student_id', studentId).maybeSingle()
-  if (!data) return { success: false, error: 'ไม่พบข้อมูลนักศึกษา' }
-  return { success: true, firstName: data.first_name, tokens: data.super_tokens || 0 }
+  // โชว์เฉพาะวิชาที่กำลังเปิดสอบ หรือวิชาที่นักศึกษาเคยสอบแล้ว
+  const visible = list.filter(s => status[s.name] !== 'not-open')
+  return { success: true, subjects: visible, status, tokens }
 }

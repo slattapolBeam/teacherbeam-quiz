@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { startExamSession, startReviewSession } from '@/app/actions/session'
-import { lookupStudent, loadSubjectsForStudent, checkTokenCount } from '@/app/actions/student'
+import { lookupStudent, loadSubjectsForStudent } from '@/app/actions/student'
 import { signInTeacher } from '@/app/actions/auth'
 
 type Role = 'student' | 'teacher'
@@ -28,6 +28,7 @@ export default function LoginPage() {
 
   const [subjects, setSubjects] = useState<Subject[]>([])
   const [subjectStatus, setSubjectStatus] = useState<Record<string, SubjectStatus>>({})
+  const [tokens, setTokens] = useState<number | null>(null)
   const [isLoadingSubjects, setIsLoadingSubjects] = useState(false)
   const [subjectMessage, setSubjectMessage] = useState<{ text: string; tone: 'info' | 'warning' } | null>(null)
   const [selectedSubject, setSelectedSubject] = useState<Subject | null>(null)
@@ -42,16 +43,26 @@ export default function LoginPage() {
   const [teacherError, setTeacherError] = useState('')
   const [isSigningIn, setIsSigningIn] = useState(false)
 
-  // Token check modal (unchanged feature from baseline)
-  const [showTokenModal, setShowTokenModal] = useState(false)
-  const [checkId, setCheckId] = useState('')
-  const [tokenResult, setTokenResult] = useState<{ firstName: string; tokens: number } | { error: string } | null>(null)
-  const [isFetchingToken, setIsFetchingToken] = useState(false)
-
   const idInputRef = useRef<HTMLInputElement>(null)
   const pinInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
+    // กลับมาจากหน้าสอบ: ข้ามขั้นกรอกรหัส ไปหน้าเลือกวิชาเลย
+    let resumeId: string | null = null
+    try {
+      resumeId = sessionStorage.getItem('resume_student_id')
+      sessionStorage.removeItem('resume_student_id')
+    } catch {}
+    if (resumeId && /^\d{13}$/.test(resumeId)) {
+      const id = resumeId
+      lookupStudent(id).then(result => {
+        if (!result.success) return idInputRef.current?.focus()
+        setStudentData(result.student)
+        setStep('subject')
+        loadSubjects(id)
+      })
+      return
+    }
     idInputRef.current?.focus()
   }, [])
 
@@ -89,6 +100,7 @@ export default function LoginPage() {
       if (!result.success) throw new Error(result.error)
       setSubjects(result.subjects)
       setSubjectStatus(result.status)
+      setTokens(result.tokens)
     } catch (err: any) {
       setSubjectMessage({ text: 'โหลดรายวิชาไม่สำเร็จ: ' + err.message, tone: 'warning' })
     } finally {
@@ -160,6 +172,7 @@ export default function LoginPage() {
     setStep('id')
     setSubjects([])
     setSubjectStatus({})
+    setTokens(null)
     setSubjectMessage(null)
     setSelectedSubject(null)
   }
@@ -168,25 +181,6 @@ export default function LoginPage() {
     setStep('subject')
     setPin('')
     setPinError('')
-  }
-
-  // ── Super Token check modal (unchanged) ───────────────────
-  async function fetchTokenCount() {
-    if (!checkId) return
-    setIsFetchingToken(true)
-    try {
-      const result = await checkTokenCount(checkId)
-      setTokenResult(result.success ? { firstName: result.firstName, tokens: result.tokens } : { error: result.error })
-    } catch {
-      setTokenResult({ error: 'เกิดข้อผิดพลาด' })
-    }
-    setIsFetchingToken(false)
-  }
-
-  function closeTokenModal() {
-    setShowTokenModal(false)
-    setTokenResult(null)
-    setCheckId('')
   }
 
   return (
@@ -299,6 +293,10 @@ export default function LoginPage() {
 
             {step === 'subject' && (
               <div>
+                <div className="flex items-center justify-center gap-1.5 mb-4 py-2 bg-yellow-50 text-yellow-700 text-sm font-medium rounded-full">
+                  <img src="/gamecoin.png" alt="Super Token" className="w-5 h-5" />
+                  Super Token ของฉัน: <span className="text-lg font-bold text-yellow-600">{tokens ?? '-'}</span> เหรียญ
+                </div>
                 <div className="flex items-center justify-between mb-3 ml-1">
                   <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">เลือกวิชา</p>
                   <button
@@ -397,55 +395,8 @@ export default function LoginPage() {
         )}
         </div>
 
-        {role === 'student' && (
-          <div className="mt-8 text-center pt-6 border-t border-gray-100">
-            <button
-              onClick={() => setShowTokenModal(true)}
-              className="text-sm text-yellow-600 font-medium hover:text-yellow-700 flex items-center justify-center gap-1 mx-auto transition bg-yellow-50 px-4 py-2 rounded-full"
-            >
-              <img src="/gamecoin.png" alt="Super Token" className="inline w-5 h-5" /> เช็กยอด Super Token ของฉัน
-            </button>
-          </div>
-        )}
       </div>
 
-      {showTokenModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-          <div className="bg-white p-8 rounded-3xl shadow-2xl max-w-sm w-full mx-4 text-center animate-in fade-in zoom-in-95 duration-200">
-            <div className="mb-4"><img src="/gamecoin.png" alt="Super Token" className="w-16 h-16 mx-auto" /></div>
-            <h2 className="text-xl font-bold text-gray-900 mb-2">เช็ก Super Token</h2>
-            <input
-              type="text"
-              value={checkId}
-              onChange={e => setCheckId(e.target.value.replace(/[^0-9]/g, ''))}
-              placeholder="กรอกรหัสนักศึกษา..."
-              className="w-full text-center px-4 py-3 bg-gray-50 rounded-xl border border-gray-200 mb-4 focus:outline-blue-500 font-mono"
-            />
-            <button
-              onClick={fetchTokenCount}
-              disabled={isFetchingToken}
-              className="w-full py-3 bg-yellow-500 hover:bg-yellow-600 disabled:opacity-60 text-white font-medium rounded-xl transition mb-2"
-            >
-              {isFetchingToken ? 'กำลังค้นหา...' : 'ตรวจสอบ'}
-            </button>
-            {tokenResult && (
-              <p className="text-lg font-bold text-gray-800 my-4">
-                {'error' in tokenResult ? (
-                  <span className="text-red-500">{tokenResult.error}</span>
-                ) : (
-                  <>
-                    สวัสดี {tokenResult.firstName}!<br />
-                    คุณมี Super Token: <span className="text-3xl text-yellow-500">{tokenResult.tokens}</span> เหรียญ
-                  </>
-                )}
-              </p>
-            )}
-            <button onClick={closeTokenModal} className="text-sm text-gray-500 hover:text-gray-800 underline">
-              ปิดหน้าต่าง
-            </button>
-          </div>
-        </div>
-      )}
     </main>
   )
 }
