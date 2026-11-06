@@ -51,6 +51,14 @@ export async function saveExamQuestions(
   const supabase = createServiceClient()
   try {
     const teacher = await requireTeacher()
+    // เช็กก่อนลบ: ถ้าวิชาไม่มี FK จะ insert พัง แต่ข้อสอบเดิมโหมด replace ถูกลบไปแล้ว
+    const { data: subject, error: subjectErr } = await supabase.from('subjects')
+      .select('name').eq('name', projectName).maybeSingle()
+    if (subjectErr) throw subjectErr
+    if (!subject) {
+      return { success: false, error: `ไม่พบวิชา "${projectName}" ในระบบ (ชื่อต้องตรงกับ project_name เป๊ะ) กรุณาสร้างวิชาก่อน` }
+    }
+
     if (mode === 'replace') {
       const { error: delErr } = await supabase.from('exam_questions')
         .delete().eq('project_name', projectName)

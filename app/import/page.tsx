@@ -473,7 +473,7 @@ export default function ImportPage() {
                     </p>
                     <button
                       onClick={handleSave}
-                      disabled={isSaving}
+                      disabled={isSaving || !subjects.includes(validation.projectName)}
                       className="w-full mt-4 py-3.5 bg-green-600 hover:bg-green-700 disabled:opacity-60 text-white font-medium rounded-2xl transition active:scale-[0.98]"
                     >
                       {isSaving ? 'กำลังบันทึก...' : 'บันทึกลง Database'}
