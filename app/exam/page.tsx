@@ -136,8 +136,7 @@ export default function ExamPage() {
     return html
       .replace(
         /<button class="hint-btn" onclick="useHint\((\d+)\)">💡<\/button>/g,
-        `${HINT_ENABLED ? `<button class="hint-btn" onclick="window.__useHint($1)" title="ดูคำใบ้ (จำกัด 3 ครั้ง)">💡</button>
-         ` : ''}<button class="hint-btn super-btn" onclick="window.__useSuperToken($1)" title="ใช้ Super Token เติมคำตอบ"><img src="/gamecoin.png" style="width:18px;height:18px;display:inline;vertical-align:middle;" alt="coin" /></button>`
+        `${HINT_ENABLED ? `<button class="hint-btn" onclick="window.__useHint($1)" title="ดูคำใบ้ (จำกัด 3 ครั้ง)">💡</button>` : ''}<button class="hint-btn super-btn" onclick="window.__useSuperToken($1)" title="ใช้ Super Token เติมคำตอบ"><img src="/gamecoin.png" style="width:18px;height:18px;display:inline;vertical-align:middle;" alt="coin" /></button>`
       )
       .replace(
         /<button class="hint-btn" onclick="useSuperToken\((\d+)\)">🌟<\/button>/g,
