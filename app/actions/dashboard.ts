@@ -188,10 +188,14 @@ export async function deleteExamResult(studentId: string, projectName: string): 
   const supabase = createServiceClient()
   try {
     const teacher = await requireTeacher()
-    const { error } = await supabase.from('exam_results')
-      .delete().eq('student_id', studentId).eq('project_name', projectName)
+    // .select() คืนแถวที่ถูกลบจริง — เก็บ snapshot (คะแนน/คำตอบ) ลง audit log เพื่อกู้คืนได้ภายหลัง
+    const { data: deleted, error } = await supabase.from('exam_results')
+      .delete().eq('student_id', studentId).eq('project_name', projectName).select()
     if (error) throw error
-    await logActivity({ type: 'teacher', id: teacher.email }, 'delete_exam_result', studentId, { projectName })
+    // ไม่มีแถวถูกลบ (เช่น กดซ้ำ) = ไม่ต้องบันทึก log ซ้ำ
+    if (deleted && deleted.length > 0) {
+      await logActivity({ type: 'teacher', id: teacher.email }, 'delete_exam_result', studentId, { projectName, deletedRows: deleted })
+    }
     return { success: true }
   } catch (err: any) {
     return { success: false, error: err.message }
@@ -291,9 +295,11 @@ export async function deleteStudent(studentId: string): Promise<ActionResult> {
   const supabase = createServiceClient()
   try {
     const teacher = await requireTeacher()
+    // exam_results อาจถูกลบตาม (cascade) — เก็บ snapshot ไว้ก่อนลบ
+    const { data: results } = await supabase.from('exam_results').select('*').eq('student_id', studentId)
     const { error } = await supabase.from('students').delete().eq('student_id', studentId)
     if (error) throw error
-    await logActivity({ type: 'teacher', id: teacher.email }, 'delete_student', studentId)
+    await logActivity({ type: 'teacher', id: teacher.email }, 'delete_student', studentId, { examResults: results ?? [] })
     return { success: true }
   } catch (err: any) {
     return { success: false, error: err.message }
@@ -305,11 +311,16 @@ export async function deleteRoom(room: string): Promise<ActionResult<{ count: nu
   const supabase = createServiceClient()
   try {
     const teacher = await requireTeacher()
+    const { data: roomStudents } = await supabase.from('students').select('student_id').eq('room', room)
+    const ids = (roomStudents ?? []).map((r: any) => r.student_id as string)
+    const { data: results } = ids.length > 0
+      ? await supabase.from('exam_results').select('*').in('student_id', ids)
+      : { data: [] }
     const { data, error } = await supabase.from('students')
       .delete().eq('room', room).select('student_id')
     if (error) throw error
     const count = data?.length || 0
-    await logActivity({ type: 'teacher', id: teacher.email }, 'delete_room', room, { count })
+    await logActivity({ type: 'teacher', id: teacher.email }, 'delete_room', room, { count, examResults: results ?? [] })
     return { success: true, count }
   } catch (err: any) {
     return { success: false, error: err.message }
